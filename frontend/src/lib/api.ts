@@ -345,7 +345,7 @@ export async function checkHealth(): Promise<boolean> {
   // Android is a standalone native app. Its WebView origin is only the
   // packaged UI, not the JARVIS server, so relative URLs can falsely report
   // "Connected" when the app shell itself returns HTTP 200.
-  const configuredBase = getBase().replace(/\\/+$/, '');
+  const configuredBase = getBase().replace(/\/+$/, '');
   if (isAndroidNative()) {
     if (!configuredBase || !configuredBase.startsWith('https://')) return false;
     try {

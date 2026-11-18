@@ -2,7 +2,7 @@ name: Android APK
 
 on:
   push:
-    branches: [main, "codex/**"]
+    branches: [main, "codex/**", "jarvis-android-build"]
     paths:
       - "frontend/**"
       - ".github/workflows/android-build.yml"

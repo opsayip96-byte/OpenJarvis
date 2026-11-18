@@ -1612,9 +1612,7 @@ async fn boot_backend(backend: SharedBackend, status: SharedStatus) {
     prepare_backend_python(&mut cmd);
 
     // Inject cloud API keys from secure desktop storage.
-    for (key, value) in cloud_keys_for_inference(&cfg) {
-        cmd.env(&key, &value);
-    }
+    add_cloud_keys_to_child(&mut cmd, &cfg);
     let jarvis_child = spawn_owned_child(&mut cmd);
 
     match jarvis_child {
@@ -1988,6 +1986,14 @@ async fn run_jarvis_command(args: Vec<String>) -> Result<String, String> {
 
     let is_serve = args.first().map(|a| a.as_str() == "serve").unwrap_or(false);
 
+    // This command can start the backend outside the managed startup flow.
+    // Desktop cloud credentials live in the system keyring and may not be in
+    // this process's inherited environment, so restore them before discovery.
+    if is_serve {
+        let cfg = read_inference_config();
+        add_cloud_keys_to_child(&mut cmd, &cfg);
+    }
+
     if !is_serve {
         // Short-lived command (e.g. `stop`, `status`): wait for it and return
         // its captured output.
@@ -2360,6 +2366,20 @@ fn cloud_keys_for_inference(cfg: &InferenceConfig) -> Vec<(String, String)> {
     keys.retain(|(name, _)| name != &credential.target_key);
     keys.push((credential.target_key, staged));
     keys
+}
+
+/// Add locally stored cloud keys to a backend child without logging values.
+fn add_cloud_keys_to_child(cmd: &mut tokio::process::Command, cfg: &InferenceConfig) {
+    add_key_pairs_to_child(cmd, cloud_keys_for_inference(cfg));
+}
+
+fn add_key_pairs_to_child(
+    cmd: &mut tokio::process::Command,
+    keys: impl IntoIterator<Item = (String, String)>,
+) {
+    for (key, value) in keys {
+        cmd.env(key, value);
+    }
 }
 
 async fn reload_cloud_keys_at(reload_url: &str, keys: Vec<(String, String)>) {
@@ -3496,7 +3516,8 @@ pub fn run() {
 mod tests {
     use super::{
         boot_plan, default_local_model, discard_pending_inference_setup_at,
-        format_extension_import_failure, format_missing_rust_toolchain, format_port_unavailable,
+        add_key_pairs_to_child, format_extension_import_failure,
+        format_missing_rust_toolchain, format_port_unavailable,
         format_uv_sync_failure, format_uv_sync_spawn_error, managed_cloud_key_names,
         matching_installed_model, model_names_match, normalize_host,
         parse_configured_inference_config, parse_ollama_model_names,
@@ -3514,6 +3535,20 @@ mod tests {
     #[test]
     fn atlas_cloud_key_is_loaded_with_managed_desktop_keys() {
         assert!(managed_cloud_key_names().contains(&"ATLASCLOUD_API_KEY".to_string()));
+    }
+
+    #[test]
+    fn server_child_receives_cloud_keys_without_logging_them() {
+        let mut cmd = tokio::process::Command::new("jarvis");
+        add_key_pairs_to_child(
+            &mut cmd,
+            vec![("OPENROUTER_API_KEY".to_string(), "test-only-value".to_string())],
+        );
+        let found = cmd
+            .as_std()
+            .get_envs()
+            .any(|(key, value)| key == "OPENROUTER_API_KEY" && value.is_some());
+        assert!(found);
     }
 
     #[derive(Default)]

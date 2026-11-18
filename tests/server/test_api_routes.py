@@ -13,6 +13,7 @@ from openjarvis.core.events import EventBus, EventType  # noqa: E402
 from openjarvis.security.capabilities import CapabilityPolicy  # noqa: E402
 from openjarvis.server.api_routes import (  # noqa: E402
     include_all_routes,
+    memory_clear,
     memory_index,
     memory_search,
     memory_stats,
@@ -179,8 +180,41 @@ class TestMemoryRoutes:
 
     def test_blocking_memory_handlers_use_starlette_threadpool(self):
         """Sync endpoints are automatically dispatched to worker threads."""
-        for handler in (memory_store, memory_search, memory_stats, memory_index):
+        for handler in (
+            memory_clear,
+            memory_store,
+            memory_search,
+            memory_stats,
+            memory_index,
+        ):
             assert not inspect.iscoroutinefunction(handler)
+
+    def test_clear_requires_confirmation_then_clears_backend(self):
+        class _Backend:
+            backend_id = "sqlite"
+
+            def __init__(self):
+                self.cleared = False
+
+            def count(self):
+                return 3
+
+            def clear(self):
+                self.cleared = True
+
+        app = _make_app()
+        backend = _Backend()
+        app.state.memory_backend = backend
+        client = TestClient(app)
+
+        denied = client.delete("/v1/memory")
+        assert denied.status_code == 400
+        assert backend.cleared is False
+
+        response = client.delete("/v1/memory?confirm=true")
+        assert response.status_code == 200
+        assert response.json() == {"status": "cleared", "entries_removed": 3}
+        assert backend.cleared is True
 
     def test_search(self):
         client = TestClient(_make_app())

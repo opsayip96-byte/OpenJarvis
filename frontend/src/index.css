@@ -176,6 +176,10 @@
     overflow: hidden;
   }
 
+  @supports (height: 100dvh) {
+    html, body, #root { height: 100dvh; }
+  }
+
   body {
     font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     font-weight: 400;
@@ -562,6 +566,60 @@
     border-radius: 50%;
     background: var(--color-accent);
     animation: hud-heartbeat 1.6s ease-in-out infinite;
+  }
+
+  .jarvis-core {
+    position: relative;
+    display: grid;
+    width: 112px;
+    height: 112px;
+    place-items: center;
+    border-radius: 50%;
+    color: var(--color-accent);
+    background:
+      radial-gradient(circle, color-mix(in srgb, var(--color-accent) 22%, transparent) 0 28%, transparent 66%),
+      conic-gradient(from 30deg, transparent, color-mix(in srgb, var(--color-accent) 58%, transparent), transparent 48%, color-mix(in srgb, var(--color-accent-purple) 38%, transparent), transparent);
+    box-shadow: 0 0 48px color-mix(in srgb, var(--color-accent) 18%, transparent), inset 0 0 26px color-mix(in srgb, var(--color-accent) 14%, transparent);
+    animation: jarvis-core-breathe 4s ease-in-out infinite;
+  }
+
+  .jarvis-core-ring {
+    position: absolute;
+    border: 1px solid color-mix(in srgb, var(--color-accent) 48%, transparent);
+    border-radius: 50%;
+  }
+
+  .jarvis-core-ring-outer { inset: 5px; border-style: dashed; animation: hud-reticle 24s linear infinite; }
+  .jarvis-core-ring-inner { inset: 19px; border-color: color-mix(in srgb, var(--color-accent-purple) 42%, transparent); animation: hud-reticle 18s linear infinite reverse; }
+  .jarvis-core-spark { filter: drop-shadow(0 0 8px var(--color-accent)); }
+  .chat-input-safe-area { padding-bottom: max(1rem, env(safe-area-inset-bottom)); }
+
+  .system-panel-scrim { display: none; }
+
+  @media (max-width: 767px) {
+    .system-panel-scrim {
+      display: block;
+      position: fixed;
+      inset: 3px 0 0;
+      z-index: 39;
+      border: 0;
+      background: rgba(0, 0, 0, 0.48);
+    }
+
+    .system-panel {
+      position: fixed;
+      inset: 3px 0 0 auto;
+      z-index: 40;
+      width: min(320px, 88vw) !important;
+      min-width: min(320px, 88vw) !important;
+      padding-bottom: env(safe-area-inset-bottom);
+      box-shadow: -20px 0 60px rgba(0, 0, 0, 0.5);
+    }
+  }
+
+  @keyframes jarvis-core-breathe {
+    0%, 100% { transform: scale(0.96); filter: brightness(0.92); }
+    50% { transform: scale(1.04); filter: brightness(1.18); }
   }
 
   /* Blinking caret — place after titles */

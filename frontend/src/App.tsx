@@ -71,9 +71,14 @@ export default function App() {
     if (!setupDone) return;
     let cancelled = false;
     setModelsLoading(true);
-    fetchModels()
-      .then((m) => {
-        if (!cancelled) setModels(m);
+    Promise.all([fetchServerInfo().catch(() => null), fetchModels()])
+      .then(([info, models]) => {
+        if (!cancelled) {
+          // The server's active model is authoritative. Apply it before model
+          // discovery so a multi-engine list cannot win by array order.
+          if (info) setServerInfo(info);
+          setModels(models);
+        }
       })
       // Preserve models already loaded by setup if this refresh fails.
       .catch(() => {})
@@ -81,7 +86,7 @@ export default function App() {
         if (!cancelled) setModelsLoading(false);
       });
     return () => { cancelled = true; };
-  }, [setupDone, setModels, setModelsLoading]);
+  }, [setupDone, setModels, setModelsLoading, setServerInfo]);
 
   // Fetch server info
   useEffect(() => {

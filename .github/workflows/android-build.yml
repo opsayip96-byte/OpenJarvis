@@ -1,0 +1,75 @@
+name: Android APK
+
+on:
+  push:
+    branches: [main, "codex/**"]
+    paths:
+      - "frontend/**"
+      - ".github/workflows/android-build.yml"
+  pull_request:
+    paths:
+      - "frontend/**"
+      - ".github/workflows/android-build.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  debug-apk:
+    name: Build JARVIS debug APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.22.0"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Use the repository's pinned npm version
+        run: npm install --global npm@11.19.0
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+          cache-dependency-path: frontend/android/**/*.gradle*
+
+      - name: Install Android SDK packages
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android platform, build tools, and NDK
+        run: |
+          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018"
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build frontend and sync native Android project
+        working-directory: frontend
+        run: |
+          npm run build:android
+          npx cap sync android
+
+      - name: Build debug APK
+        working-directory: frontend/android
+        run: ./gradlew --no-daemon --stacktrace assembleDebug
+
+      - name: Verify APK exists
+        run: test -s frontend/android/app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Upload installable debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: jarvis-android-debug
+          path: frontend/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14

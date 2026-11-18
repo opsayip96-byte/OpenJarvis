@@ -35,6 +35,12 @@ export function Sidebar() {
   const modelLoading = useAppStore((s) => s.modelLoading);
   const deepResearch = useAppStore((s) => s.deepResearch);
 
+  const closeMobileSidebar = () => {
+    if (window.matchMedia?.('(max-width: 767px)').matches) {
+      useAppStore.getState().setSidebarOpen(false);
+    }
+  };
+
   const settings = useAppStore((s) => s.settings);
   const updateSettings = useAppStore((s) => s.updateSettings);
 
@@ -43,6 +49,7 @@ export function Sidebar() {
 
   const messages = useAppStore((s) => s.messages);
   const handleNewChat = () => {
+    closeMobileSidebar();
     // Don't create a new chat if the current one is empty
     if (messages.length === 0) {
       navigate('/');
@@ -198,7 +205,7 @@ export function Sidebar() {
               return (
                 <button
                   key={item.path}
-                  onClick={() => navigate(item.path)}
+                  onClick={() => { navigate(item.path); closeMobileSidebar(); }}
                   className="relative flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors w-full text-left cursor-pointer"
                   style={{
                     background: isActive ? 'var(--color-accent-subtle)' : 'transparent',

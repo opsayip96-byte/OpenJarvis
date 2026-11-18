@@ -1108,6 +1108,24 @@ export async function getMemoryStats(): Promise<MemoryStats> {
   return res.json();
 }
 
+/** Whether the user has enabled automatic memory context in Settings. */
+export function isMemoryContextEnabled(): boolean {
+  try {
+    return localStorage.getItem('openjarvis-memory-enabled') !== 'false';
+  } catch {
+    return true;
+  }
+}
+
+export async function clearIndexedMemory(): Promise<number> {
+  const res = await apiFetch('/v1/memory?confirm=true', { method: 'DELETE' });
+  if (!res.ok) {
+    throw new Error(await memoryErrorDetail(res, 'Failed to clear indexed memory'));
+  }
+  const data = await res.json();
+  return Number(data.entries_removed ?? 0);
+}
+
 export async function searchMemory(query: string, topK: number = 5): Promise<MemorySearchResult[]> {
   const res = await apiFetch(`/v1/memory/search`, {
     method: 'POST',

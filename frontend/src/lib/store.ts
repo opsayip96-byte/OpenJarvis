@@ -140,6 +140,12 @@ function saveSettings(settings: Settings): void {
   localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
 }
 
+function isCompactViewport(): boolean {
+  return typeof window !== 'undefined'
+    && typeof window.matchMedia === 'function'
+    && window.matchMedia('(max-width: 767px)').matches;
+}
+
 // ── Store ─────────────────────────────────────────────────────────────
 
 const INITIAL_STREAM: StreamState = {
@@ -292,8 +298,8 @@ export const useAppStore = create<AppState>((set, get) => {
     settings: loadSettings(),
 
     commandPaletteOpen: false,
-    sidebarOpen: true,
-    systemPanelOpen: true,
+    sidebarOpen: !isCompactViewport(),
+    systemPanelOpen: !isCompactViewport(),
 
     optInEnabled: localStorage.getItem(OPTIN_KEY) === 'true',
     optInDisplayName: localStorage.getItem(OPTIN_NAME_KEY) || '',
@@ -495,6 +501,9 @@ export const useAppStore = create<AppState>((set, get) => {
           (state.settings.defaultModel &&
             chatModels.some((m) => m.id === state.settings.defaultModel) &&
             state.settings.defaultModel) ||
+          (state.serverInfo?.model &&
+            chatModels.some((m) => m.id === state.serverInfo?.model) &&
+            state.serverInfo.model) ||
           chatModels[0]?.id ||
           models.find((m) => !isEmbedOnlyModel(m.id))?.id ||
           '';
@@ -508,15 +517,20 @@ export const useAppStore = create<AppState>((set, get) => {
         if (!state.selectedModel || currentIsBad || currentMissing) {
           // Prefer a real chat model. If none exist, clear a bad/missing
           // selection rather than keeping an embed-only id that 400s on chat.
-          return {
-            models,
-            selectedModel: preferred,
-          };
+          const settings = preferred && state.settings.defaultModel !== preferred
+            ? { ...state.settings, defaultModel: preferred }
+            : state.settings;
+          if (settings !== state.settings) saveSettings(settings);
+          return { models, selectedModel: preferred, settings };
         }
         return { models };
       }),
     setModelsLoading: (loading: boolean) => set({ modelsLoading: loading }),
-    setSelectedModel: (model: string) => set({ selectedModel: model }),
+    setSelectedModel: (model: string) => {
+      const settings = { ...get().settings, defaultModel: model };
+      saveSettings(settings);
+      set({ selectedModel: model, settings });
+    },
     setServerInfo: (info: ServerInfo | null) => set({ serverInfo: info }),
     setSavings: (data: SavingsData | null) => set({ savings: data }),
     incrementSavings: (usage: TokenUsage) => {

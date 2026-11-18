@@ -41,6 +41,13 @@ let urlCounter = 0;
 
 beforeEach(() => {
   vi.stubGlobal('Audio', FakeAudio as unknown as typeof Audio);
+  const storage = new Map<string, string>();
+  vi.stubGlobal('localStorage', {
+    getItem: (key: string) => storage.get(key) ?? null,
+    setItem: (key: string, value: string) => storage.set(key, String(value)),
+    removeItem: (key: string) => { storage.delete(key); },
+    clear: () => storage.clear(),
+  });
   vi.stubGlobal('URL', {
     createObjectURL: () => {
       const url = `blob:fake/${++urlCounter}`;
@@ -54,6 +61,8 @@ beforeEach(() => {
 
   synth.mockReset();
   health.mockReset();
+  localStorage.removeItem('openjarvis-tts-voice');
+  localStorage.removeItem('openjarvis-tts-speed');
 
   // Reset the store first: it tears down whatever the previous test left
   // playing, and that teardown revokes a URL. Clearing the ledgers afterwards
@@ -80,6 +89,52 @@ function deferred<T>() {
 }
 
 describe('shared voice output', () => {
+  it('uses configured voice and speaking speed', async () => {
+    localStorage.setItem('openjarvis-tts-voice', 'voice-en-1');
+    localStorage.setItem('openjarvis-tts-speed', '1.4');
+    synth.mockResolvedValue(new Blob(['wav']));
+
+    await useTtsStore.getState().speak('m1', 'Hallo');
+
+    expect(synth).toHaveBeenCalledWith('Hallo', expect.objectContaining({
+      voiceId: 'voice-en-1',
+      speed: 1.4,
+    }));
+  });
+
+  it('falls back to browser speech with the configured voice and rate', async () => {
+    class FakeUtterance {
+      rate = 1;
+      voice: unknown = null;
+      onend: (() => void) | null = null;
+      onerror: ((event: { error?: string }) => void) | null = null;
+      constructor(readonly text: string) {}
+    }
+    const voice = { name: 'English Voice', voiceURI: 'en-us', lang: 'en-US' };
+    const speak = vi.fn((utterance: FakeUtterance) => {
+      queueMicrotask(() => utterance.onend?.());
+    });
+    vi.stubGlobal('SpeechSynthesisUtterance', FakeUtterance);
+    vi.stubGlobal('speechSynthesis', {
+      getVoices: () => [voice],
+      speak,
+      cancel: vi.fn(),
+    });
+    localStorage.setItem('openjarvis-tts-voice', 'en-us');
+    localStorage.setItem('openjarvis-tts-speed', '1.3');
+    synth.mockRejectedValue(new Error('No text-to-speech backend available'));
+    health.mockResolvedValue({ available: false });
+
+    await useTtsStore.getState().ensureHealth();
+    await useTtsStore.getState().speak('m1', 'Hello JARVIS');
+
+    expect(useTtsStore.getState().available).toBe(true);
+    expect(speak).toHaveBeenCalledOnce();
+    expect(speak.mock.calls[0][0].text).toBe('Hello JARVIS');
+    expect(speak.mock.calls[0][0].voice).toBe(voice);
+    expect(speak.mock.calls[0][0].rate).toBe(1.3);
+  });
+
   it('plays one utterance and reports which message owns it', async () => {
     synth.mockResolvedValue(new Blob(['wav']));
 

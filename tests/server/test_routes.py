@@ -1202,6 +1202,41 @@ class TestIdentityPromptInjection:
         assert "OpenJarvis" in system_messages[0].content
         assert "favorite color is blue" in system_messages[0].content
 
+    def test_request_can_disable_configured_memory_context(self):
+        from openjarvis.memory.store import Fact
+
+        class _MemoryService:
+            def list_facts(self):
+                return [Fact(text="The user's favorite color is blue")]
+
+        captured: list = []
+        engine = _make_capturing_engine(captured)
+        cfg = _identity_config()
+        cfg.agent.context_from_memory = True
+        client = TestClient(
+            create_app(
+                engine,
+                "test-model",
+                config=cfg,
+                memory_service=_MemoryService(),
+            )
+        )
+
+        response = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "test-model",
+                "messages": [{"role": "user", "content": "What is my favorite color?"}],
+                "memory_context": False,
+            },
+        )
+
+        assert response.status_code == 200
+        prompt = "\n".join(
+            message.content for message in engine.generate.call_args.args[0]
+        )
+        assert "favorite color is blue" not in prompt
+
     def test_direct_never_sends_quarantined_fact_to_engine(self):
         from openjarvis.memory.store import Fact
 
@@ -1583,6 +1618,23 @@ class TestModelsEndpoint:
         assert len(data["data"]) == 1
         assert data["data"][0]["id"] == "test-model"
 
+    def test_active_cloud_model_is_advertised(self):
+        model = "openrouter/free"
+        engine = _make_engine(models=[model])
+        engine.engine_id = "cloud"
+        engine.is_cloud = True
+        app = create_app(engine, model, config=_test_config())
+
+        with patch(
+            "openjarvis.server.cloud_router.list_local_models",
+            new_callable=AsyncMock,
+            return_value=[],
+        ):
+            resp = TestClient(app).get("/v1/models")
+
+        assert resp.status_code == 200
+        assert [item["id"] for item in resp.json()["data"]] == [model]
+
     def test_model_object_format(self, client):
         resp = client.get("/v1/models")
         data = resp.json()
@@ -1656,8 +1708,8 @@ class TestModelsEndpoint:
         assert "Hello" in resp.text
         assert '"engine": "litellm"' in resp.text
 
-    def test_configured_nim_model_is_listed(self):
-        """Regression for #1226: NIM models (org/model) must reach the Web UI."""
+    def test_nim_catalog_models_are_not_advertised_as_verified_chat_models(self):
+        """A NIM catalog listing alone does not verify inference availability."""
         model = "meta/llama-3.1-70b-instruct"
         engine = _make_engine(models=[model])
         engine.engine_id = "nim"
@@ -1677,8 +1729,7 @@ class TestModelsEndpoint:
             resp = client.get("/v1/models")
 
         assert resp.status_code == 200
-        assert [item["id"] for item in resp.json()["data"]] == [model]
-        assert resp.json()["data"][0]["owned_by"] == "nim"
+        assert model not in [item["id"] for item in resp.json()["data"]]
 
     @pytest.mark.parametrize("multi", [False, True])
     def test_nim_provider_model_streams_through_active_engine(self, multi):

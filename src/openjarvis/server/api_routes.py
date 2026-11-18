@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import (
     APIRouter,
     HTTPException,
+    Query,
     Request,
     Response,
     WebSocket,
@@ -52,6 +53,14 @@ class MemorySearchRequest(BaseModel):
 
 class MemoryIndexRequest(BaseModel):
     path: str
+
+
+class PersonalMemoryRequest(BaseModel):
+    text: str
+
+
+class PersonalMemoryUpdateRequest(BaseModel):
+    text: str
 
 
 class BudgetLimitsRequest(BaseModel):
@@ -202,6 +211,80 @@ async def message_agent(agent_id: str, req: AgentMessageRequest, request: Reques
 # ---- Memory routes ----
 
 memory_router = APIRouter(prefix="/v1/memory", tags=["memory"])
+personal_memory_router = APIRouter(prefix="/v1/memories", tags=["personal-memory"])
+
+
+def _personal_memory_store(request: Request):
+    store = getattr(request.app.state, "fact_store", None)
+    if store is None:
+        raise HTTPException(status_code=503, detail="Persistent fact memory is unavailable")
+    return store
+
+
+@personal_memory_router.get("")
+def list_personal_memories(request: Request):
+    """List durable user facts, including facts not currently recallable."""
+    return {"memories": [
+        {"index": i, "text": fact.text, "source": fact.source,
+         "created_at": fact.created_at, "trust": fact.trust}
+        for i, fact in enumerate(_personal_memory_store(request).list())
+    ]}
+
+
+@personal_memory_router.get("/export")
+def export_personal_memories(request: Request):
+    """Export the user's saved facts as a downloadable JSON backup."""
+    import datetime
+
+    store = _personal_memory_store(request)
+    payload = {
+        "exported_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "memories": [
+            {"text": fact.text, "source": fact.source, "created_at": fact.created_at, "trust": fact.trust}
+            for fact in store.list()
+        ],
+    }
+    return Response(
+        content=json.dumps(payload, ensure_ascii=False, indent=2),
+        media_type="application/json",
+        headers={"Content-Disposition": 'attachment; filename="jarvis-memories.json"'},
+    )
+
+
+@personal_memory_router.post("")
+def add_personal_memory(req: PersonalMemoryRequest, request: Request):
+    """Explicitly save a user-approved personal fact."""
+    from openjarvis.memory.store import TRUST_TRUSTED
+    store = _personal_memory_store(request)
+    if not store.add_with_trust(req.text, source="user-approved", trust=TRUST_TRUSTED):
+        raise HTTPException(status_code=400, detail="Memory is empty or already exists")
+    return {"status": "stored", "trust": TRUST_TRUSTED}
+
+
+@personal_memory_router.put("/{index}")
+def update_personal_memory(index: int, req: PersonalMemoryUpdateRequest, request: Request):
+    if not _personal_memory_store(request).update(index, req.text):
+        raise HTTPException(status_code=404, detail="Memory not found or text is empty")
+    return {"status": "updated"}
+
+
+@personal_memory_router.delete("/{index}")
+def delete_personal_memory(index: int, request: Request):
+    if not _personal_memory_store(request).delete(index):
+        raise HTTPException(status_code=404, detail="Memory not found")
+    return {"status": "deleted"}
+
+
+conversation_router = APIRouter(prefix="/v1/conversations", tags=["conversations"])
+
+
+@conversation_router.get("/{conversation_id}")
+def get_persisted_conversation(conversation_id: str, request: Request):
+    store = getattr(request.app.state, "conversation_store", None)
+    conversation = store.get(conversation_id) if store is not None else None
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return conversation
 
 
 def _get_memory_backend(request: Request):
@@ -282,6 +365,28 @@ def memory_stats(request: Request):
         }
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+@memory_router.delete("")
+def memory_clear(request: Request, confirm: bool = Query(default=False)):
+    """Clear indexed SQLite memories after an explicit user confirmation."""
+    if not confirm:
+        raise HTTPException(
+            status_code=400,
+            detail="Set confirm=true to clear indexed memory",
+        )
+    backend = _get_memory_backend(request)
+    if backend is None:
+        raise HTTPException(status_code=503, detail="Memory is not configured")
+    try:
+        removed = backend.count()
+        backend.clear()
+        return {"status": "cleared", "entries_removed": removed}
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to clear indexed memory",
+        ) from exc
 
 
 @memory_router.get("/config")
@@ -1297,6 +1402,8 @@ def include_all_routes(app) -> None:
     app.include_router(approval_router)
     app.include_router(agents_router)
     app.include_router(memory_router)
+    app.include_router(personal_memory_router)
+    app.include_router(conversation_router)
     app.include_router(traces_router)
     app.include_router(telemetry_router)
     app.include_router(skills_router)

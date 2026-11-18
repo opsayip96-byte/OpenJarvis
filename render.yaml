@@ -15,13 +15,13 @@ services:
     # Pin a cloud model as well as the engine. The repository's default model
     # is local-only, so omitting this would make `jarvis serve` reject the
     # otherwise healthy cloud engine during startup.
-    dockerCommand: serve --host 0.0.0.0 --port 10000 --engine cloud --model gpt-4o-mini
+    dockerCommand: serve --host 0.0.0.0 --port 10000 --engine cloud --model openrouter/free
     healthCheckPath: /health
     autoDeploy: true
     envVars:
       # Force the cloud engine path. The free Render plan has no GPU and the
       # bundled local backends (Ollama/vLLM) cannot run here. The command above
-      # selects the OpenAI-backed cloud engine and a model it can serve.
+      # selects OpenRouter's free model route; no paid model is configured.
 
       # Keep Render's expected public port aligned with the fixed Docker
       # command above. Change both values together when customizing the port.
@@ -33,11 +33,9 @@ services:
       - key: OPENJARVIS_API_KEY
         generateValue: true
 
-      # Required at initial Blueprint creation. Render's `sync: false` fields
-      # are operator-supplied secrets; using one provider here keeps the
-      # one-click contract deterministic instead of incorrectly requiring a
-      # key for every supported cloud provider.
-      - key: OPENAI_API_KEY
+      # Required at initial Blueprint creation; keep the key out of images
+      # and source control. Supply an OpenRouter key with free-route access.
+      - key: OPENROUTER_API_KEY
         sync: false
 
       # The free service filesystem is ephemeral. OpenJarvis state under this

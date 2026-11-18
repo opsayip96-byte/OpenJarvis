@@ -25,6 +25,7 @@ import {
   fetchSpeechHealth,
   fetchTtsHealth,
   getMemoryStats,
+  clearIndexedMemory,
   getInferenceSource,
   setInferenceSource,
   getCloudKeyStatus,
@@ -37,6 +38,7 @@ import {
   type MemoryStats,
 } from '../lib/api';
 import { isAutoUpdateDisabled, setAutoUpdateDisabled } from '../components/Desktop/UpdateChecker';
+import { apiFetch } from '../lib/api';
 
 const CLOUD_KEY_STATUS_CHANGED = 'openjarvis-cloud-key-status-changed';
 
@@ -259,7 +261,7 @@ export function MemoryStatusRow({
         : 'Unavailable';
 
   return (
-    <SettingRow label="Memory status" description={description}>
+    <SettingRow label="Indexed document memory" description={`${description}. Saved personal facts are listed separately below.`}>
       <div className="flex items-center gap-2">
         <Brain size={14} style={{ color: stats && stats.backend !== 'none' ? 'var(--color-accent)' : 'var(--color-text-tertiary)' }} />
         <span className="text-xs whitespace-nowrap" style={{ color: 'var(--color-text-secondary)' }}>
@@ -280,6 +282,117 @@ export function MemoryStatusRow({
   );
 }
 
+type PersonalMemory = { index: number; text: string; source: string; trust: string };
+
+function PersonalMemoryManager() {
+  const [memories, setMemories] = useState<PersonalMemory[]>([]);
+  const [draft, setDraft] = useState('');
+  const [editing, setEditing] = useState<number | null>(null);
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    try {
+      const response = await apiFetch('/v1/memories');
+      if (!response.ok) throw new Error(`Could not load saved memories (HTTP ${response.status}).`);
+      const body = await response.json();
+      setMemories(Array.isArray(body.memories) ? body.memories : []);
+      setError('');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void refresh(); }, [refresh]);
+
+  const save = async (index?: number) => {
+    const text = draft.trim();
+    if (!text) return;
+    try {
+      const response = index === undefined
+        ? await apiFetch('/v1/memories', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) })
+        : await apiFetch(`/v1/memories/${index}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.detail || `Could not save memory (HTTP ${response.status}).`);
+      }
+      setDraft('');
+      setEditing(null);
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const remove = async (index: number) => {
+    if (!window.confirm('Delete this saved memory?')) return;
+    try {
+      const response = await apiFetch(`/v1/memories/${index}`, { method: 'DELETE' });
+      if (!response.ok) throw new Error(`Could not delete memory (HTTP ${response.status}).`);
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const exportMemories = async () => {
+    try {
+      const response = await apiFetch('/v1/memories/export');
+      if (!response.ok) throw new Error(`Could not export memories (HTTP ${response.status}).`);
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'jarvis-memories.json';
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  return (
+    <div className="py-3" style={{ borderBottom: '1px solid var(--color-border-subtle)' }}>
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-sm" style={{ color: 'var(--color-text)' }}>Saved personal memories</div>
+        <button type="button" onClick={() => void exportMemories()} className="flex items-center gap-1 text-xs cursor-pointer" style={{ color: 'var(--color-accent)' }}>
+          <Download size={12} /> Export
+        </button>
+      </div>
+      <p className="text-xs mt-0.5 mb-2" style={{ color: 'var(--color-text-tertiary)' }}>
+        Facts you add here are saved locally and may be used as context in future chats.
+      </p>
+      {loading && <p className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>Loading…</p>}
+      {memories.map((memory) => (
+        <div key={`${memory.index}-${memory.text}`} className="flex items-start gap-2 py-2">
+          {editing === memory.index ? (
+            <>
+              <input autoFocus value={draft} onChange={(event) => setDraft(event.target.value)} className="flex-1 min-w-0 px-2 py-1 rounded text-xs" style={{ background: 'var(--color-bg)', color: 'var(--color-text)', border: '1px solid var(--color-border)' }} />
+              <button type="button" onClick={() => void save(memory.index)} className="text-xs cursor-pointer" style={{ color: 'var(--color-accent)' }}>Save</button>
+              <button type="button" onClick={() => { setEditing(null); setDraft(''); }} className="text-xs cursor-pointer" style={{ color: 'var(--color-text-secondary)' }}>Cancel</button>
+            </>
+          ) : (
+            <>
+              <span className="flex-1 min-w-0 text-xs break-words" style={{ color: 'var(--color-text-secondary)' }}>{memory.text}</span>
+              <button type="button" onClick={() => { setEditing(memory.index); setDraft(memory.text); }} className="text-xs cursor-pointer" style={{ color: 'var(--color-accent)' }}>Edit</button>
+              <button type="button" onClick={() => void remove(memory.index)} className="text-xs cursor-pointer" style={{ color: 'var(--color-error)' }}>Delete</button>
+            </>
+          )}
+        </div>
+      ))}
+      {!loading && memories.length === 0 && <p className="text-xs py-1" style={{ color: 'var(--color-text-tertiary)' }}>No saved personal memories yet.</p>}
+      <div className="flex gap-2 mt-2">
+        <input value={editing === null ? draft : ''} onChange={(event) => setDraft(event.target.value)} placeholder="Add a fact or preference to remember" className="flex-1 min-w-0 px-2 py-1.5 rounded text-xs" style={{ background: 'var(--color-bg)', color: 'var(--color-text)', border: '1px solid var(--color-border)' }} />
+        <button type="button" onClick={() => void save()} disabled={!draft.trim()} className="px-3 py-1.5 rounded text-xs cursor-pointer disabled:opacity-40" style={{ background: 'var(--color-accent)', color: 'white' }}>Remember</button>
+      </div>
+      {error && <p role="alert" className="text-xs mt-2" style={{ color: 'var(--color-error)' }}>{error}</p>}
+    </div>
+  );
+}
+
 const themeOptions: { value: ThemeMode; label: string; icon: typeof Sun }[] = [
   { value: 'light', label: 'Light', icon: Sun },
   { value: 'dark', label: 'Dark', icon: Moon },
@@ -294,8 +407,45 @@ export function SettingsPage() {
   const serverInfo = useAppStore((s) => s.serverInfo);
   const [healthy, setHealthy] = useState<boolean | null>(null);
   const [speechBackendAvailable, setSpeechBackendAvailable] = useState<boolean | null>(null);
+  const [speechLanguage, setSpeechLanguage] = useState(() => {
+    try { return localStorage.getItem('openjarvis-speech-language') || ''; } catch { return ''; }
+  });
   const [ttsBackend, setTtsBackend] = useState<{ available: boolean; backend?: string; voice_id?: string } | null>(null);
+  const [ttsVoice, setTtsVoice] = useState(() => {
+    try { return localStorage.getItem('openjarvis-tts-voice') || ''; } catch { return ''; }
+  });
+  const [browserVoices, setBrowserVoices] = useState<SpeechSynthesisVoice[]>([]);
+  const [browserVoice, setBrowserVoice] = useState(() => {
+    try { return localStorage.getItem('openjarvis-browser-voice') || ''; } catch { return ''; }
+  });
+  const [ttsPitch, setTtsPitch] = useState(() => {
+    try {
+      const value = Number(localStorage.getItem('openjarvis-tts-pitch') || '0.85');
+      return Number.isFinite(value) && value >= 0 && value <= 2 ? value : 0.85;
+    } catch { return 0.85; }
+  });
+  const [ttsVolume, setTtsVolume] = useState(() => {
+    try {
+      const value = Number(localStorage.getItem('openjarvis-tts-volume') || '1');
+      return Number.isFinite(value) && value >= 0 && value <= 1 ? value : 1;
+    } catch { return 1; }
+  });
+  const [ttsSpeed, setTtsSpeed] = useState(() => {
+    try {
+      const value = Number(localStorage.getItem('openjarvis-tts-speed') || '1');
+      return Number.isFinite(value) && value >= 0.5 && value <= 2 ? value : 1;
+    } catch { return 1; }
+  });
   const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.speechSynthesis) return;
+    const speech = window.speechSynthesis;
+    const refresh = () => setBrowserVoices(speech.getVoices());
+    refresh();
+    speech.addEventListener?.('voiceschanged', refresh);
+    return () => speech.removeEventListener?.('voiceschanged', refresh);
+  }, []);
 
   const [autoUpdateEnabled, setAutoUpdateEnabled] = useState(() => !isAutoUpdateDisabled());
   const [updateCheckState, setUpdateCheckState] = useState<'idle' | 'checking' | 'available' | 'latest'>('idle');
@@ -319,6 +469,7 @@ export function SettingsPage() {
   }, []);
 
   const [memoryStatus, setMemoryStatus] = useState<MemoryStatus>({ kind: 'loading' });
+  const [memoryClearMessage, setMemoryClearMessage] = useState('');
   const memoryRequestId = useRef(0);
   const [memoryEnabled, setMemoryEnabled] = useState(() => {
     try { return localStorage.getItem('openjarvis-memory-enabled') !== 'false'; } catch { return true; }
@@ -382,6 +533,18 @@ export function SettingsPage() {
       }
     }
   }, []);
+
+  const handleClearIndexedMemory = useCallback(async () => {
+    if (!window.confirm('Clear all indexed memory? This cannot be undone.')) return;
+    setMemoryClearMessage('Clearing indexed memory…');
+    try {
+      const removed = await clearIndexedMemory();
+      setMemoryClearMessage(`Cleared ${removed} indexed entr${removed === 1 ? 'y' : 'ies'}.`);
+      await refreshMemoryStatus();
+    } catch (error) {
+      setMemoryClearMessage(error instanceof Error ? error.message : 'Could not clear memory.');
+    }
+  }, [refreshMemoryStatus]);
 
   useEffect(() => {
     void refreshMemoryStatus();
@@ -685,6 +848,7 @@ export function SettingsPage() {
           {/* Memory */}
           <Section title="Memory">
             <MemoryStatusRow status={memoryStatus} onRetry={() => { void refreshMemoryStatus(); }} />
+            <PersonalMemoryManager />
             <SettingRow label="Use memory context" description="Automatically inject relevant memories into conversations">
               <button
                 onClick={() => {
@@ -707,6 +871,20 @@ export function SettingsPage() {
                 />
               </button>
             </SettingRow>
+            <SettingRow label="Delete indexed memory" description="Remove indexed documents and memories; this does not delete chat history">
+              <button
+                onClick={() => void handleClearIndexedMemory()}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer"
+                style={{ color: 'var(--color-error)', border: '1px solid var(--color-error)', background: 'transparent' }}
+              >
+                <Trash2 size={12} /> Clear
+              </button>
+            </SettingRow>
+            {memoryClearMessage && (
+              <p role="status" className="text-xs -mt-2" style={{ color: 'var(--color-text-secondary)' }}>
+                {memoryClearMessage}
+              </p>
+            )}
             <SettingRow label="Memory backend" description="Which retrieval engine to use">
               <select
                 value={memoryBackend}
@@ -861,22 +1039,149 @@ export function SettingsPage() {
                 />
               </button>
             </SettingRow>
-            <SettingRow label="Voice" description="Backend and voice used for spoken replies">
-              <div className="flex items-center gap-2">
+            <SettingRow label="Voice" description="Backend voice ID override; leave blank to use its default">
+              <div className="flex flex-col items-end gap-2">
                 <span
+                  className="flex items-center gap-2 text-xs"
+                  style={{ color: 'var(--color-text-secondary)' }}
+                >
+                  <span
                   className="w-2 h-2 rounded-full"
                   style={{
                     background: ttsBackend?.available ? 'var(--color-success)' : 'var(--color-text-tertiary)',
                   }}
-                />
-                <span className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>
+                  />
                   {ttsBackend === null ? 'Checking...'
                     : ttsBackend.available ? `${ttsBackend.backend}${ttsBackend.voice_id ? ` / ${ttsBackend.voice_id}` : ''}`
-                    : 'Not configured'}
+                    : typeof speechSynthesis !== 'undefined' && typeof SpeechSynthesisUtterance !== 'undefined'
+                      ? 'Browser voice available'
+                      : 'Not configured'}
                 </span>
+                <input
+                  aria-label="Text-to-speech voice ID"
+                  value={ttsVoice}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    setTtsVoice(value);
+                    try { localStorage.setItem('openjarvis-tts-voice', value); } catch {}
+                  }}
+                  placeholder={ttsBackend?.voice_id || 'Backend default'}
+                  className="text-sm px-3 py-1.5 rounded-lg outline-none w-56"
+                  style={{ background: 'var(--color-bg-secondary)', color: 'var(--color-text)', border: '1px solid var(--color-border)' }}
+                />
               </div>
             </SettingRow>
-            <SettingRow label="Backend status" description="Requires Whisper, Deepgram, or another speech backend">
+            <SettingRow label="Device voice" description="Available voices depend on voices installed on this device">
+              <div className="flex items-center gap-2">
+                <select
+                  aria-label="Device text-to-speech voice"
+                  value={browserVoice}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    setBrowserVoice(value);
+                    try { localStorage.setItem('openjarvis-browser-voice', value); } catch {}
+                  }}
+                  className="max-w-56 text-xs px-2 py-1.5 rounded-lg"
+                  style={{ background: 'var(--color-bg-secondary)', color: 'var(--color-text)', border: '1px solid var(--color-border)' }}
+                >
+                  <option value="">System default</option>
+                  {browserVoices.map((voice) => (
+                    <option key={voice.voiceURI} value={voice.name}>{voice.name} ({voice.lang})</option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  disabled={browserVoices.length === 0}
+                  onClick={() => {
+                    if (!window.speechSynthesis) return;
+                    window.speechSynthesis.cancel();
+                    const sample = new SpeechSynthesisUtterance('Hello sir. How can I help you?');
+                    sample.rate = ttsSpeed;
+                    sample.pitch = ttsPitch;
+                    sample.voice = browserVoices.find((voice) => voice.name === browserVoice) ?? null;
+                    window.speechSynthesis.speak(sample);
+                  }}
+                  className="text-xs cursor-pointer disabled:opacity-40"
+                  style={{ color: 'var(--color-accent)' }}
+                >Preview</button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setBrowserVoice('');
+                    setTtsVoice('');
+                    try {
+                      localStorage.removeItem('openjarvis-browser-voice');
+                      localStorage.removeItem('openjarvis-tts-voice');
+                    } catch {}
+                  }}
+                  className="text-xs cursor-pointer"
+                  style={{ color: 'var(--color-text-secondary)' }}
+                >Restore default</button>
+              </div>
+            </SettingRow>
+            <SettingRow label="Browser voice pitch" description={`${ttsPitch.toFixed(2)} · lower values sound deeper`}>
+              <input
+                aria-label="Browser voice pitch"
+                type="range" min="0" max="2" step="0.05" value={ttsPitch}
+                onChange={(event) => {
+                  const value = Number(event.target.value);
+                  setTtsPitch(value);
+                  try { localStorage.setItem('openjarvis-tts-pitch', String(value)); } catch {}
+                }}
+                className="w-40 accent-cyan-400"
+              />
+            </SettingRow>
+            <SettingRow label="Speaking speed" description={`${ttsSpeed.toFixed(1)}×`}>
+              <input
+                aria-label="Speaking speed"
+                type="range"
+                min="0.5"
+                max="2"
+                step="0.1"
+                value={ttsSpeed}
+                onChange={(event) => {
+                  const value = Number(event.target.value);
+                  setTtsSpeed(value);
+                  try { localStorage.setItem('openjarvis-tts-speed', String(value)); } catch {}
+                }}
+                className="w-40 accent-cyan-400"
+              />
+            </SettingRow>
+            <SettingRow label="Voice volume" description={`${Math.round(ttsVolume * 100)}%`}>
+              <input
+                aria-label="Voice volume" type="range" min="0" max="1" step="0.05" value={ttsVolume}
+                onChange={(event) => {
+                  const value = Number(event.target.value);
+                  setTtsVolume(value);
+                  try { localStorage.setItem('openjarvis-tts-volume', String(value)); } catch {}
+                }}
+                className="w-40 accent-cyan-400"
+              />
+            </SettingRow>
+            <SettingRow label="Recognition language" description="Used by browser speech recognition; automatic uses this device's language">
+              <select
+                aria-label="Speech recognition language"
+                value={speechLanguage}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  setSpeechLanguage(value);
+                  try { localStorage.setItem('openjarvis-speech-language', value); } catch {}
+                }}
+                className="text-xs px-2 py-1.5 rounded-lg"
+                style={{ background: 'var(--color-bg-secondary)', color: 'var(--color-text)', border: '1px solid var(--color-border)' }}
+              >
+                <option value="">Automatic</option>
+                <option value="en-GB">English (United Kingdom)</option>
+                <option value="en-US">English (United States)</option>
+                <option value="en-IN">English (India)</option>
+                <option value="fr-FR">Français</option>
+                <option value="de-DE">Deutsch</option>
+                <option value="es-ES">Español</option>
+                <option value="hi-IN">हिन्दी</option>
+                <option value="ja-JP">日本語</option>
+              </select>
+            </SettingRow>
+            <SettingRow label="Server transcription" description="Fallback when browser speech recognition is unavailable">
               <div className="flex items-center gap-2">
                 <span
                   className="w-2 h-2 rounded-full"
@@ -895,7 +1200,7 @@ export function SettingsPage() {
             </SettingRow>
             {!speechBackendAvailable && speechBackendAvailable !== null && (
               <div className="text-xs mt-2 px-1" style={{ color: 'var(--color-text-tertiary)' }}>
-                Set up a speech backend to use voice input.
+                Browser recognition is used when available. Set up a server speech backend for the fallback.
                 See the <a href="https://open-jarvis.github.io/OpenJarvis/user-guide/tools/" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--color-accent)' }}>documentation</a> for details.
               </div>
             )}

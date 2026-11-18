@@ -28,6 +28,10 @@ class ChatCompletionRequest(BaseModel):
     max_tokens: int = 1024
     stream: bool = False
     tools: Optional[List[Dict[str, Any]]] = None
+    # Optional per-request override used by the first-party client. `None`
+    # keeps OpenAI-compatible callers on the server's configured default.
+    memory_context: Optional[bool] = None
+    conversation_id: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------

@@ -649,7 +649,11 @@ class LocalCloudAgent(BaseAgent):
         from openai import OpenAI
 
         if model.startswith("openrouter/"):
-            model = model[len("openrouter/") :]
+            candidate = model[len("openrouter/") :]
+            # Built-in OpenRouter routers (auto/free) keep their prefix;
+            # provider/model IDs use the stripped form.
+            if "/" in candidate:
+                model = candidate
         api_key = os.environ.get("OPENROUTER_API_KEY")
         if not api_key:
             raise RuntimeError("OPENROUTER_API_KEY is not set; cannot call OpenRouter.")

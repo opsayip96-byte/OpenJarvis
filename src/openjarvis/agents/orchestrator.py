@@ -456,6 +456,40 @@ class OrchestratorAgent(ToolUsingAgent):
             content = result.get("content", "")
             raw_tool_calls = result.get("tool_calls", [])
 
+            # Some OpenAI-compatible providers can emit a tool call with an
+            # empty function name. Sending that call back in the next turn
+            # makes the provider reject the entire conversation (for example,
+            # OpenRouter reports ``function.name must be a non-empty string``).
+            # Discard malformed calls before building assistant/tool messages.
+            if raw_tool_calls:
+                valid_tool_calls = [
+                    tc
+                    for tc in raw_tool_calls
+                    if isinstance(tc, dict)
+                    and isinstance(tc.get("name"), str)
+                    and tc["name"].strip()
+                ]
+                if not valid_tool_calls:
+                    content = self._strip_think_tags(content)
+                    if not content:
+                        content = (
+                            "The model returned an invalid tool call. "
+                            "Please retry or choose a different model."
+                        )
+                    self._emit_turn_end(turns=turns, content_length=len(content))
+                    return AgentResult(
+                        content=content,
+                        tool_results=all_tool_results,
+                        turns=turns,
+                        metadata={
+                            "prompt_tokens": total_prompt_tokens,
+                            "completion_tokens": total_completion_tokens,
+                            "total_tokens": total_prompt_tokens
+                            + total_completion_tokens,
+                        },
+                    )
+                raw_tool_calls = valid_tool_calls
+
             # No tool calls -> check continuation, then final answer
             if not raw_tool_calls:
                 content = self._check_continuation(result, messages)

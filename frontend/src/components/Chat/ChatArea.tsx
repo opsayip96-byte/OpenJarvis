@@ -182,17 +182,19 @@ export function ChatArea() {
       >
         {isEmpty ? (
           <div className="flex flex-col items-center justify-center h-full px-4">
-            <div
-              className="w-12 h-12 rounded-2xl flex items-center justify-center mb-4"
-              style={{ background: 'var(--color-accent-subtle)', color: 'var(--color-accent)' }}
-            >
-              <Sparkles size={24} />
+            <div className="jarvis-core mb-5" role="img" aria-label="JARVIS assistant core">
+              <div className="jarvis-core-ring jarvis-core-ring-outer" />
+              <div className="jarvis-core-ring jarvis-core-ring-inner" />
+              <Sparkles size={25} className="jarvis-core-spark" />
             </div>
+            <p className="text-[10px] tracking-[0.32em] font-mono mb-2" style={{ color: 'var(--color-accent)' }}>
+              J.A.R.V.I.S.
+            </p>
             <h2 className="text-xl font-semibold mb-2" style={{ color: 'var(--color-text)' }}>
               {getGreeting()}
             </h2>
             <p className="text-sm text-center max-w-sm mb-6" style={{ color: 'var(--color-text-secondary)' }}>
-              Ask anything. Your AI runs locally — private, fast, and always available.
+              Your assistant is ready. Requests use the model selected in the sidebar.
             </p>
 
             {/* Quick action hints */}

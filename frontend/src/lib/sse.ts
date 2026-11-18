@@ -4,10 +4,12 @@ import { timeZoneHeaders } from './timezone';
 
 export interface ChatRequest {
   model: string;
+  conversation_id?: string;
   messages: Array<{ role: string; content: string }>;
   stream: true;
   temperature?: number;
   max_tokens?: number;
+  memory_context?: boolean;
 }
 
 export async function* streamChat(

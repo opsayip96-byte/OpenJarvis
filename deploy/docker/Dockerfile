@@ -74,7 +74,7 @@ WORKDIR /app
 # Render's dashboard dockerCommand begins with "serve" and overrides the
 # image ENTRYPOINT. Provide that executable explicitly and forward to the
 # installed OpenJarvis CLI so the service starts as "jarvis serve ...".
-RUN printf '#!/bin/sh\\nexec jarvis serve "$@"\\n' > /usr/local/bin/serve && \\
+RUN printf '%s\\n' '#!/bin/sh' 'exec jarvis serve "$@"' > /usr/local/bin/serve && \
     chmod 0755 /usr/local/bin/serve
 
 # Run as an unprivileged user — the server needs no root privileges, so dropping

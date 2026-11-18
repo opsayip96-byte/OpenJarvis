@@ -1,14 +1,16 @@
 import { useState } from 'react';
+import { X } from 'lucide-react';
 import type { SpeechState } from '../../hooks/useSpeech';
 
 interface MicButtonProps {
   state: SpeechState;
   onClick: () => void;
+  onCancel?: () => void;
   disabled?: boolean;
   reason?: 'not-enabled' | 'no-backend' | 'streaming';
 }
 
-export function MicButton({ state, onClick, disabled, reason }: MicButtonProps) {
+export function MicButton({ state, onClick, onCancel, disabled, reason }: MicButtonProps) {
   const [showTooltip, setShowTooltip] = useState(false);
 
   const tooltipText =
@@ -63,6 +65,18 @@ export function MicButton({ state, onClick, disabled, reason }: MicButtonProps) 
           </svg>
         )}
       </button>
+      {state === 'recording' && onCancel && (
+        <button
+          type="button"
+          onClick={onCancel}
+          className="p-1 rounded-lg cursor-pointer"
+          style={{ color: 'var(--color-error)' }}
+          title="Cancel recording"
+          aria-label="Cancel recording"
+        >
+          <X size={14} />
+        </button>
+      )}
       {showTooltip && isInactive && (
         <div
           className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2.5 py-1.5 rounded-lg text-xs whitespace-nowrap pointer-events-none"

@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { synthesizeSpeech, fetchTtsHealth } from './api';
 import { toSpeakableText } from './message-text';
+import { isAndroidNative, JarvisNative } from './android-native';
 
 export type TtsState = 'idle' | 'loading' | 'speaking';
 
@@ -59,6 +60,7 @@ export function shouldAutoplayFinishedReply(
 }
 
 function teardown(): void {
+  if (isAndroidNative()) void JarvisNative.stopSpeaking().catch(() => {});
   if (audio) {
     // Detach first: clearing src re-runs the media load algorithm, which fails
     // on an empty source and dispatches an `error` event. With the handler
@@ -129,12 +131,33 @@ export const useTtsStore = create<TtsStore>((set, get) => ({
     try {
       let voiceId: string | undefined;
       let speed: number | undefined;
+      let pitch = 0.85;
+      let volume = 1;
       try {
         voiceId = localStorage.getItem('openjarvis-tts-voice')?.trim() || undefined;
         const savedSpeed = Number(localStorage.getItem('openjarvis-tts-speed'));
         speed = Number.isFinite(savedSpeed) && savedSpeed >= 0.5 && savedSpeed <= 2 ? savedSpeed : undefined;
+        const savedPitch = Number(localStorage.getItem('openjarvis-tts-pitch'));
+        if (Number.isFinite(savedPitch)) pitch = Math.max(0.5, Math.min(2, savedPitch));
+        const savedVolume = Number(localStorage.getItem('openjarvis-tts-volume'));
+        if (Number.isFinite(savedVolume)) volume = Math.max(0, Math.min(1, savedVolume));
+        voiceId = localStorage.getItem('openjarvis-browser-voice')?.trim() || voiceId;
       } catch {
         // Browser storage may be disabled; server defaults remain usable.
+      }
+      if (isAndroidNative()) {
+        const language = localStorage.getItem('openjarvis-tts-language') || 'en-GB';
+        set({ state: 'speaking', speakingId: id });
+        await JarvisNative.speak({
+          text: trimmed,
+          language,
+          voiceName: voiceId,
+          rate: speed ?? 1,
+          pitch,
+          volume,
+        });
+        if (mine === token) set({ state: 'idle', speakingId: null });
+        return;
       }
       let blob: Blob | null = null;
       let serverError: unknown;

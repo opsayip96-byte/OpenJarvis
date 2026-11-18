@@ -34,9 +34,11 @@ import {
   saveToolCredentials,
   deleteToolCredential,
   isTauri,
+  saveAndroidBackendApiKey,
   type InferenceSource,
   type MemoryStats,
 } from '../lib/api';
+import { isAndroidNative, JarvisNative, type AndroidVoice } from '../lib/android-native';
 import { isAutoUpdateDisabled, setAutoUpdateDisabled } from '../components/Desktop/UpdateChecker';
 import { apiFetch } from '../lib/api';
 
@@ -172,10 +174,10 @@ function ApiKeyInput({
 
 function CloudProviderStatus({ label, keyName }: { label: string; keyName: string }) {
   const [hasKey, setHasKey] = useState(false);
-  const desktopKeyStorage = isTauri();
+  const secureKeyStorage = isTauri() || isAndroidNative();
 
   const refresh = useCallback(async () => {
-    if (!desktopKeyStorage) {
+    if (!secureKeyStorage) {
       setHasKey(false);
       return;
     }
@@ -185,7 +187,7 @@ function CloudProviderStatus({ label, keyName }: { label: string; keyName: strin
     } catch {
       setHasKey(false);
     }
-  }, [desktopKeyStorage, keyName]);
+  }, [secureKeyStorage, keyName]);
 
   useEffect(() => {
     void refresh();
@@ -437,6 +439,47 @@ export function SettingsPage() {
     } catch { return 1; }
   });
   const [saved, setSaved] = useState(false);
+
+  const androidApp = isAndroidNative();
+  const [androidApiKeyDraft, setAndroidApiKeyDraft] = useState('');
+  const [androidApiKeySaved, setAndroidApiKeySaved] = useState(false);
+  const [androidApiKeyError, setAndroidApiKeyError] = useState('');
+  const [androidVoices, setAndroidVoices] = useState<AndroidVoice[]>([]);
+  const [androidVoiceError, setAndroidVoiceError] = useState('');
+  const [ttsLanguage, setTtsLanguage] = useState(() => {
+    try { return localStorage.getItem('openjarvis-tts-language') || 'en-GB'; } catch { return 'en-GB'; }
+  });
+
+
+  useEffect(() => {
+    if (!androidApp) return;
+    JarvisNative.getSecureStatus()
+      .then((status) => setAndroidApiKeySaved(!!status.OPENJARVIS_API_KEY))
+      .catch(() => setAndroidApiKeyError('Android secure storage is unavailable.'));
+    JarvisNative.getSpeechVoices()
+      .then(({ voices }) => {
+        setAndroidVoices(voices);
+        setAndroidVoiceError(voices.length ? '' : 'No offline Android voices are installed. Add a voice in Android Text-to-speech settings.');
+      })
+      .catch((error) => setAndroidVoiceError(error instanceof Error ? error.message : 'Android speech engine unavailable.'));
+  }, [androidApp]);
+
+  const saveAndroidApiKey = useCallback(async () => {
+    setAndroidApiKeyError('');
+    try {
+      await saveAndroidBackendApiKey(androidApiKeyDraft);
+      setAndroidApiKeyDraft('');
+      setAndroidApiKeySaved(!!androidApiKeyDraft.trim());
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (error) {
+      if (androidApp) {
+        JarvisNative.getSecureStatus().then((status) => setAndroidApiKeySaved(!!status.OPENJARVIS_API_KEY)).catch(() => {});
+      }
+      setAndroidApiKeyError(error instanceof Error ? error.message : 'Could not save API key.');
+    }
+  }, [androidApiKeyDraft, androidApp]);
+
 
   useEffect(() => {
     if (typeof window === 'undefined' || !window.speechSynthesis) return;
@@ -717,12 +760,12 @@ export function SettingsPage() {
                 </span>
               </div>
             </SettingRow>
-            <SettingRow label="API URL" description="Set if backend runs on a different port or host">
+            <SettingRow label="API URL" description={androidApp ? 'Use the public HTTPS URL of your JARVIS backend.' : 'Set if backend runs on a different port or host'}>
               <input
                 type="text"
                 value={settings.apiUrl}
                 onChange={(e) => { updateSettings({ apiUrl: e.target.value }); showSaved(); }}
-                placeholder="http://localhost:8000"
+                placeholder={androidApp ? 'https://your-jarvis-server.example' : 'http://localhost:8000'}
                 className="text-sm px-3 py-1.5 rounded-lg outline-none w-56"
                 style={{
                   background: 'var(--color-bg-secondary)',
@@ -731,20 +774,32 @@ export function SettingsPage() {
                 }}
               />
             </SettingRow>
-            <SettingRow label="API key" description="Required only if the server was started with an API key">
-              <input
-                type="password"
-                value={settings.apiKey}
-                onChange={(e) => { updateSettings({ apiKey: e.target.value }); showSaved(); }}
-                placeholder="OPENJARVIS_API_KEY"
-                autoComplete="off"
-                className="text-sm px-3 py-1.5 rounded-lg outline-none w-56"
-                style={{
-                  background: 'var(--color-bg-secondary)',
-                  color: 'var(--color-text)',
-                  border: '1px solid var(--color-border)',
-                }}
-              />
+            <SettingRow
+              label="API key"
+              description={androidApp ? 'Stored encrypted with Android Keystore. Sent only to your HTTPS backend.' : 'Required only if the server was started with an API key'}
+            >
+              <div className="flex flex-col items-end gap-1.5">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="password"
+                    value={androidApp ? androidApiKeyDraft : settings.apiKey}
+                    onChange={(e) => androidApp
+                      ? setAndroidApiKeyDraft(e.target.value)
+                      : (updateSettings({ apiKey: e.target.value }), showSaved())}
+                    placeholder={androidApp && androidApiKeySaved ? 'Saved securely' : 'OPENJARVIS_API_KEY'}
+                    autoComplete="off"
+                    className="text-sm px-3 py-1.5 rounded-lg outline-none w-56"
+                    style={{ background: 'var(--color-bg-secondary)', color: 'var(--color-text)', border: '1px solid var(--color-border)' }}
+                  />
+                  {androidApp && (
+                    <button type="button" onClick={() => void saveAndroidApiKey()} className="px-3 py-1.5 rounded-lg text-xs cursor-pointer" style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}>
+                      {androidApiKeyDraft.trim() ? 'Save' : 'Remove'}
+                    </button>
+                  )}
+                </div>
+                {androidApiKeySaved && <span className="text-[10px]" style={{ color: 'var(--color-success)' }}>Credential saved in Android secure storage</span>}
+                {androidApiKeyError && <span className="text-[10px]" style={{ color: 'var(--color-error)' }}>{androidApiKeyError}</span>}
+              </div>
             </SettingRow>
           </Section>
 
@@ -984,7 +1039,7 @@ export function SettingsPage() {
           </Section>
 
           {/* Speech */}
-          <Section title="Speech">
+          <Section title={androidApp ? 'Speech & Voice Studio' : 'Speech'}>
             <SettingRow label="Speech-to-Text" description="Enable microphone input for voice dictation">
               <button
                 onClick={() => { updateSettings({ speechEnabled: !settings.speechEnabled }); showSaved(); }}
@@ -1071,10 +1126,13 @@ export function SettingsPage() {
                 />
               </div>
             </SettingRow>
-            <SettingRow label="Device voice" description="Available voices depend on voices installed on this device">
+            <SettingRow
+              label={androidApp ? 'Android system voice' : 'Device voice'}
+              description={androidApp ? 'Native Android Text-to-speech voices installed on this phone.' : 'Available voices depend on voices installed on this device'}
+            >
               <div className="flex items-center gap-2">
                 <select
-                  aria-label="Device text-to-speech voice"
+                  aria-label={androidApp ? 'Android text-to-speech voice' : 'Device text-to-speech voice'}
                   value={browserVoice}
                   onChange={(event) => {
                     const value = event.target.value;
@@ -1083,21 +1141,31 @@ export function SettingsPage() {
                   }}
                   className="max-w-56 text-xs px-2 py-1.5 rounded-lg"
                   style={{ background: 'var(--color-bg-secondary)', color: 'var(--color-text)', border: '1px solid var(--color-border)' }}
+                  disabled={androidApp ? androidVoices.length === 0 : browserVoices.length === 0}
                 >
                   <option value="">System default</option>
-                  {browserVoices.map((voice) => (
-                    <option key={voice.voiceURI} value={voice.name}>{voice.name} ({voice.lang})</option>
-                  ))}
+                  {androidApp
+                    ? androidVoices.map((voice) => <option key={voice.name} value={voice.name}>{voice.name} ({voice.language})</option>)
+                    : browserVoices.map((voice) => <option key={voice.voiceURI} value={voice.name}>{voice.name} ({voice.lang})</option>)}
                 </select>
                 <button
                   type="button"
-                  disabled={browserVoices.length === 0}
+                  disabled={androidApp ? androidVoices.length === 0 : browserVoices.length === 0}
                   onClick={() => {
+                    if (androidApp) {
+                      const voice = androidVoices.find((item) => item.name === browserVoice);
+                      void JarvisNative.speak({
+                        text: 'Hello sir. How can I help you?', language: voice?.language || ttsLanguage,
+                        voiceName: browserVoice || undefined, rate: ttsSpeed, pitch: ttsPitch, volume: ttsVolume,
+                      }).catch((error) => setAndroidVoiceError(error instanceof Error ? error.message : 'Voice preview failed.'));
+                      return;
+                    }
                     if (!window.speechSynthesis) return;
                     window.speechSynthesis.cancel();
                     const sample = new SpeechSynthesisUtterance('Hello sir. How can I help you?');
                     sample.rate = ttsSpeed;
                     sample.pitch = ttsPitch;
+                    sample.volume = ttsVolume;
                     sample.voice = browserVoices.find((voice) => voice.name === browserVoice) ?? null;
                     window.speechSynthesis.speak(sample);
                   }}
@@ -1109,9 +1177,17 @@ export function SettingsPage() {
                   onClick={() => {
                     setBrowserVoice('');
                     setTtsVoice('');
+                    setTtsPitch(0.85);
+                    setTtsSpeed(1);
+                    setTtsVolume(1);
+                    setTtsLanguage('en-GB');
                     try {
                       localStorage.removeItem('openjarvis-browser-voice');
                       localStorage.removeItem('openjarvis-tts-voice');
+                      localStorage.setItem('openjarvis-tts-pitch', '0.85');
+                      localStorage.setItem('openjarvis-tts-speed', '1');
+                      localStorage.setItem('openjarvis-tts-volume', '1');
+                      localStorage.setItem('openjarvis-tts-language', 'en-GB');
                     } catch {}
                   }}
                   className="text-xs cursor-pointer"
@@ -1119,10 +1195,27 @@ export function SettingsPage() {
                 >Restore default</button>
               </div>
             </SettingRow>
-            <SettingRow label="Browser voice pitch" description={`${ttsPitch.toFixed(2)} · lower values sound deeper`}>
+            {androidApp && androidVoiceError && <p className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>{androidVoiceError}</p>}
+            <SettingRow label="Voice language" description="Choose a language when the installed engine provides it">
+              <select
+                aria-label="Voice language"
+                value={ttsLanguage}
+                onChange={(event) => {
+                  setTtsLanguage(event.target.value);
+                  try { localStorage.setItem('openjarvis-tts-language', event.target.value); } catch {}
+                }}
+                className="text-xs px-2 py-1.5 rounded-lg"
+                style={{ background: 'var(--color-bg-secondary)', color: 'var(--color-text)', border: '1px solid var(--color-border)' }}
+              >
+                <option value="en-GB">British English</option>
+                <option value="en-US">American English</option>
+                <option value="en-IN">Indian English</option>
+              </select>
+            </SettingRow>
+            <SettingRow label={androidApp ? 'Native voice pitch' : 'Browser voice pitch'} description={`${ttsPitch.toFixed(2)} · lower values sound deeper`}>
               <input
-                aria-label="Browser voice pitch"
-                type="range" min="0" max="2" step="0.05" value={ttsPitch}
+                aria-label="Voice pitch"
+                type="range" min={androidApp ? '0.5' : '0'} max="2" step="0.05" value={ttsPitch}
                 onChange={(event) => {
                   const value = Number(event.target.value);
                   setTtsPitch(value);

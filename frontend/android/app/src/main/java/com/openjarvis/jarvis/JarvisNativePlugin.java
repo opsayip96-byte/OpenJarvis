@@ -1,0 +1,430 @@
+package com.openjarvis.jarvis;
+
+import android.Manifest;
+import android.content.Intent;
+import android.net.Uri;
+import android.os.Bundle;
+import android.provider.Settings;
+import android.security.keystore.KeyGenParameterSpec;
+import android.security.keystore.KeyProperties;
+import android.speech.RecognitionListener;
+import android.speech.RecognizerIntent;
+import android.speech.SpeechRecognizer;
+import android.speech.tts.TextToSpeech;
+import android.speech.tts.UtteranceProgressListener;
+import android.speech.tts.Voice;
+import android.util.Base64;
+
+import com.getcapacitor.JSArray;
+import com.getcapacitor.JSObject;
+import com.getcapacitor.PermissionState;
+import com.getcapacitor.Plugin;
+import com.getcapacitor.PluginCall;
+import com.getcapacitor.PluginMethod;
+import com.getcapacitor.annotation.CapacitorPlugin;
+import com.getcapacitor.annotation.Permission;
+import com.getcapacitor.annotation.PermissionCallback;
+
+import java.security.KeyStore;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.Locale;
+import java.util.Set;
+
+import javax.crypto.Cipher;
+import javax.crypto.KeyGenerator;
+import javax.crypto.SecretKey;
+import javax.crypto.spec.GCMParameterSpec;
+
+@CapacitorPlugin(
+    name = "JarvisNative",
+    permissions = {@Permission(alias = "microphone", strings = {Manifest.permission.RECORD_AUDIO})}
+)
+public class JarvisNativePlugin extends Plugin implements RecognitionListener {
+    private static final String KEY_ALIAS = "com.openjarvis.jarvis.credential-key.v1";
+    private static final Set<String> ALLOWED_KEYS = new HashSet<>(Arrays.asList(
+        "OPENROUTER_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY",
+        "GEMINI_API_KEY", "GOOGLE_API_KEY", "OPENJARVIS_API_KEY"
+    ));
+
+    private SpeechRecognizer recognizer;
+    private Intent recognitionIntent;
+    private boolean listening;
+    private boolean stopping;
+    private String language = "en-GB";
+    private final StringBuilder transcript = new StringBuilder();
+    private PluginCall stopCall;
+    private TextToSpeech tts;
+    private boolean ttsReady;
+    private PluginCall ttsCall;
+    private String ttsUtteranceId;
+
+    @Override
+    public void load() {
+        super.load();
+        tts = new TextToSpeech(getContext(), status -> {
+            ttsReady = status == TextToSpeech.SUCCESS;
+            if (ttsReady) {
+                tts.setOnUtteranceProgressListener(new UtteranceProgressListener() {
+                    @Override public void onStart(String id) {}
+                    @Override public void onDone(String id) {
+                        PluginCall call = ttsCall;
+                        if (call != null && id.equals(ttsUtteranceId)) {
+                            ttsCall = null;
+                            ttsUtteranceId = null;
+                            call.resolve();
+                        }
+                    }
+                    @Override public void onError(String id) { finishTtsWithError(id, "Android speech engine failed."); }
+                    @Override public void onError(String id, int errorCode) { finishTtsWithError(id, "Android speech engine failed (" + errorCode + ")."); }
+                });
+            }
+        });
+    }
+
+    @PluginMethod
+    public void checkMicrophonePermission(PluginCall call) {
+        JSObject result = new JSObject();
+        result.put("state", getPermissionState("microphone").toString().toLowerCase(Locale.ROOT));
+        result.put("available", SpeechRecognizer.isRecognitionAvailable(getContext()));
+        call.resolve(result);
+    }
+
+    @PluginMethod
+    public void startRecognition(PluginCall call) {
+        if (getPermissionState("microphone") != PermissionState.GRANTED) {
+            requestPermissionForAlias("microphone", call, "microphonePermissionResult");
+            return;
+        }
+        startRecognitionWithPermission(call);
+    }
+
+    @PermissionCallback
+    private void microphonePermissionResult(PluginCall call) {
+        if (getPermissionState("microphone") != PermissionState.GRANTED) {
+            call.reject("Microphone permission was denied. Use Open app permissions to enable it.", "MICROPHONE_PERMISSION_DENIED");
+            return;
+        }
+        startRecognitionWithPermission(call);
+    }
+
+    private void startRecognitionWithPermission(PluginCall call) {
+        if (!SpeechRecognizer.isRecognitionAvailable(getContext())) {
+            call.reject("No Android speech recognition service is available on this device.", "RECOGNIZER_UNAVAILABLE");
+            return;
+        }
+        releaseRecognizer();
+        transcript.setLength(0);
+        stopping = false;
+        language = call.getString("language", "en-GB");
+        recognitionIntent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+        recognitionIntent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
+        recognitionIntent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, language);
+        recognitionIntent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
+        recognitionIntent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3);
+        try {
+            recognizer = SpeechRecognizer.createSpeechRecognizer(getContext());
+            recognizer.setRecognitionListener(this);
+            recognizer.startListening(recognitionIntent);
+            listening = true;
+            call.resolve(new JSObject().put("started", true));
+        } catch (SecurityException e) {
+            releaseRecognizer();
+            call.reject("Android denied microphone access. Check app microphone permission.", "MICROPHONE_PERMISSION_DENIED", e);
+        } catch (Exception e) {
+            releaseRecognizer();
+            call.reject("Could not start Android speech recognition.", "RECOGNITION_START_FAILED", e);
+        }
+    }
+
+    @PluginMethod
+    public void stopRecognition(PluginCall call) {
+        if (recognizer == null || !listening) {
+            call.reject("There is no active recording.", "NOT_RECORDING");
+            return;
+        }
+        stopCall = call;
+        stopping = true;
+        try {
+            recognizer.stopListening();
+        } catch (Exception e) {
+            failStop("Could not stop Android speech recognition.", e);
+        }
+    }
+
+    @PluginMethod
+    public void cancelRecognition(PluginCall call) {
+        stopping = true;
+        releaseRecognizer();
+        if (stopCall != null) {
+            stopCall.reject("Recording cancelled.", "CANCELLED");
+            stopCall = null;
+        }
+        transcript.setLength(0);
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void openAppSettings(PluginCall call) {
+        try {
+            Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                Uri.fromParts("package", getContext().getPackageName(), null));
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            getContext().startActivity(intent);
+            call.resolve();
+        } catch (Exception e) {
+            call.reject("Could not open Android app permissions.", "SETTINGS_OPEN_FAILED", e);
+        }
+    }
+
+    @PluginMethod
+    public void saveSecureValue(PluginCall call) {
+        String name = call.getString("name", "");
+        String value = call.getString("value", "");
+        if (!ALLOWED_KEYS.contains(name)) {
+            call.reject("This credential name is not allowed.", "INVALID_CREDENTIAL_NAME");
+            return;
+        }
+        try {
+            android.content.SharedPreferences prefs = getContext().getSharedPreferences("jarvis_secure_vault", 0);
+            if (value.isEmpty()) {
+                prefs.edit().remove(name).apply();
+            } else {
+                Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+                cipher.init(Cipher.ENCRYPT_MODE, getOrCreateKey());
+                byte[] encrypted = cipher.doFinal(value.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                String stored = Base64.encodeToString(cipher.getIV(), Base64.NO_WRAP) + "." +
+                    Base64.encodeToString(encrypted, Base64.NO_WRAP);
+                prefs.edit().putString(name, stored).apply();
+            }
+            call.resolve();
+        } catch (Exception e) {
+            call.reject("Could not save the credential to Android secure storage.", "SECURE_STORAGE_FAILED", e);
+        }
+    }
+
+    @PluginMethod
+    public void getSecureValue(PluginCall call) {
+        String name = call.getString("name", "");
+        if (!ALLOWED_KEYS.contains(name)) {
+            call.reject("This credential name is not allowed.", "INVALID_CREDENTIAL_NAME");
+            return;
+        }
+        String stored = getContext().getSharedPreferences("jarvis_secure_vault", 0).getString(name, null);
+        JSObject result = new JSObject();
+        result.put("value", stored == null ? "" : decryptValue(stored));
+        call.resolve(result);
+    }
+
+    @PluginMethod
+    public void getSecureStatus(PluginCall call) {
+        android.content.SharedPreferences prefs = getContext().getSharedPreferences("jarvis_secure_vault", 0);
+        JSObject result = new JSObject();
+        for (String key : ALLOWED_KEYS) result.put(key, prefs.contains(key));
+        call.resolve(result);
+    }
+
+    private SecretKey getOrCreateKey() throws Exception {
+        KeyStore store = KeyStore.getInstance("AndroidKeyStore");
+        store.load(null);
+        if (store.containsAlias(KEY_ALIAS)) return (SecretKey) store.getKey(KEY_ALIAS, null);
+        KeyGenerator generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore");
+        generator.init(new KeyGenParameterSpec.Builder(KEY_ALIAS,
+            KeyProperties.PURPOSE_ENCRYPT | KeyProperties.PURPOSE_DECRYPT)
+            .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+            .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+            .setRandomizedEncryptionRequired(true)
+            .build());
+        return generator.generateKey();
+    }
+
+    private String decryptValue(String stored) {
+        try {
+            String[] parts = stored.split("\\.", 2);
+            if (parts.length != 2) throw new IllegalArgumentException("Invalid encrypted value");
+            byte[] iv = Base64.decode(parts[0], Base64.NO_WRAP);
+            byte[] encrypted = Base64.decode(parts[1], Base64.NO_WRAP);
+            Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+            cipher.init(Cipher.DECRYPT_MODE, getOrCreateKey(), new GCMParameterSpec(128, iv));
+            return new String(cipher.doFinal(encrypted), java.nio.charset.StandardCharsets.UTF_8);
+        } catch (Exception e) {
+            throw new IllegalStateException("Could not decrypt the credential from Android secure storage.", e);
+        }
+    }
+
+    @PluginMethod
+    public void getSpeechVoices(PluginCall call) {
+        if (!ttsReady || tts == null || tts.getVoices() == null) {
+            call.reject("Android text-to-speech engine is not ready.", "TTS_UNAVAILABLE");
+            return;
+        }
+        JSArray voices = new JSArray();
+        for (Voice voice : tts.getVoices()) {
+            if (voice == null || voice.getLocale() == null || voice.isNetworkConnectionRequired()) continue;
+            JSObject row = new JSObject();
+            row.put("name", voice.getName());
+            row.put("language", voice.getLocale().toLanguageTag());
+            row.put("quality", voice.getQuality());
+            voices.put(row);
+        }
+        call.resolve(new JSObject().put("voices", voices));
+    }
+
+    @PluginMethod
+    public void speak(PluginCall call) {
+        if (!ttsReady || tts == null) {
+            call.reject("Android text-to-speech engine is not ready. Try again shortly.", "TTS_UNAVAILABLE");
+            return;
+        }
+        String text = call.getString("text", "").trim();
+        if (text.isEmpty()) { call.reject("There is no text to speak.", "EMPTY_TEXT"); return; }
+        String tag = call.getString("language", "en-GB");
+        String voiceName = call.getString("voiceName", "");
+        float rate = clamp(call.getFloat("rate", 1.0f), 0.5f, 2.0f);
+        float pitch = clamp(call.getFloat("pitch", 0.85f), 0.5f, 2.0f);
+        float volume = clamp(call.getFloat("volume", 1.0f), 0.0f, 1.0f);
+        try {
+            Locale locale = Locale.forLanguageTag(tag);
+            tts.setLanguage(locale);
+            if (!voiceName.isEmpty() && tts.getVoices() != null) {
+                for (Voice voice : tts.getVoices()) {
+                    if (voiceName.equals(voice.getName())) { tts.setVoice(voice); break; }
+                }
+            }
+            tts.setSpeechRate(rate);
+            tts.setPitch(pitch);
+            Bundle params = new Bundle();
+            params.putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, volume);
+            if (ttsCall != null) ttsCall.reject("Speech was interrupted.", "INTERRUPTED");
+            ttsCall = call;
+            ttsUtteranceId = "jarvis-" + System.nanoTime();
+            int result = tts.speak(text, TextToSpeech.QUEUE_FLUSH, params, ttsUtteranceId);
+            if (result == TextToSpeech.ERROR) {
+                ttsCall = null;
+                call.reject("Android speech engine could not start playback.", "TTS_PLAYBACK_FAILED");
+            }
+        } catch (Exception e) {
+            ttsCall = null;
+            call.reject("Could not speak with the selected Android voice.", "TTS_PLAYBACK_FAILED", e);
+        }
+    }
+
+    @PluginMethod
+    public void stopSpeaking(PluginCall call) {
+        if (tts != null) tts.stop();
+        if (ttsCall != null) { ttsCall.resolve(); ttsCall = null; }
+        ttsUtteranceId = null;
+        call.resolve();
+    }
+
+    private void finishTtsWithError(String id, String message) {
+        PluginCall call = ttsCall;
+        if (call != null && id.equals(ttsUtteranceId)) {
+            ttsCall = null;
+            ttsUtteranceId = null;
+            call.reject(message, "TTS_PLAYBACK_FAILED");
+        }
+    }
+
+    private float clamp(float value, float min, float max) { return Math.max(min, Math.min(max, value)); }
+
+    @Override public void onReadyForSpeech(Bundle params) {}
+    @Override public void onBeginningOfSpeech() {}
+    @Override public void onRmsChanged(float rmsdB) {}
+    @Override public void onBufferReceived(byte[] buffer) {}
+    @Override public void onEndOfSpeech() {}
+    @Override public void onPartialResults(Bundle partialResults) {}
+    @Override public void onEvent(int eventType, Bundle params) {}
+
+    @Override
+    public void onResults(Bundle results) {
+        appendBestResult(results);
+        if (stopping) finishRecognition();
+        else if (recognizer != null && listening) {
+            getActivity().runOnUiThread(() -> {
+                try { recognizer.startListening(recognitionIntent); }
+                catch (Exception e) { failStop("Speech recognition stopped unexpectedly.", e); }
+            });
+        }
+    }
+
+    private void appendBestResult(Bundle results) {
+        if (results == null) return;
+        ArrayList<String> values = results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
+        if (values != null && !values.isEmpty() && values.get(0) != null) {
+            String phrase = values.get(0).trim();
+            if (!phrase.isEmpty()) {
+                if (transcript.length() > 0) transcript.append(' ');
+                transcript.append(phrase);
+            }
+        }
+    }
+
+    private void finishRecognition() {
+        PluginCall call = stopCall;
+        stopCall = null;
+        releaseRecognizer();
+        String result = transcript.toString().trim();
+        transcript.setLength(0);
+        if (call == null) return;
+        if (result.isEmpty()) call.reject("No speech was detected. Check your connection and try again.", "NO_SPEECH");
+        else call.resolve(new JSObject().put("text", result));
+    }
+
+    @Override
+    public void onError(int error) {
+        if (stopping) {
+            if (transcript.length() > 0) finishRecognition();
+            else failStop(recognitionError(error), null);
+            return;
+        }
+        if (error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT) {
+            if (recognizer != null && listening) {
+                getActivity().runOnUiThread(() -> {
+                    try { recognizer.startListening(recognitionIntent); }
+                    catch (Exception e) { failStop("Speech recognition stopped unexpectedly.", e); }
+                });
+            }
+            return;
+        }
+        failStop(recognitionError(error), null);
+    }
+
+    private String recognitionError(int code) {
+        switch (code) {
+            case SpeechRecognizer.ERROR_NETWORK:
+            case SpeechRecognizer.ERROR_NETWORK_TIMEOUT: return "Speech recognition needs a network connection. Check that the phone is online.";
+            case SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS: return "Microphone permission is required. Open app permissions to enable it.";
+            case SpeechRecognizer.ERROR_RECOGNIZER_BUSY: return "Android speech recognition is busy. Wait a moment and try again.";
+            case SpeechRecognizer.ERROR_NO_MATCH:
+            case SpeechRecognizer.ERROR_SPEECH_TIMEOUT: return "No speech was detected. Try again.";
+            default: return "Android speech recognition failed. Please try again.";
+        }
+    }
+
+    private void failStop(String message, Exception error) {
+        PluginCall call = stopCall;
+        stopCall = null;
+        releaseRecognizer();
+        transcript.setLength(0);
+        if (call != null) call.reject(message, "RECOGNITION_FAILED", error);
+    }
+
+    private void releaseRecognizer() {
+        listening = false;
+        if (recognizer != null) {
+            try { recognizer.cancel(); } catch (Exception ignored) {}
+            try { recognizer.destroy(); } catch (Exception ignored) {}
+            recognizer = null;
+        }
+    }
+
+    @Override
+    protected void handleOnDestroy() {
+        releaseRecognizer();
+        if (tts != null) { tts.stop(); tts.shutdown(); tts = null; }
+        if (ttsCall != null) { ttsCall.reject("App closed.", "INTERRUPTED"); ttsCall = null; }
+        super.handleOnDestroy();
+    }
+}

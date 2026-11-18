@@ -84,6 +84,7 @@ export function InputArea() {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const sendRecognizedSpeechRef = useRef<(text: string) => Promise<void>>(async () => {});
 
   const activeId = useAppStore((s) => s.activeId);
   const selectedModel = useAppStore((s) => s.selectedModel);
@@ -107,8 +108,11 @@ export function InputArea() {
     state: speechState,
     error: speechError,
     available: speechAvailable,
+    permissionDenied: speechPermissionDenied,
+    openPermissionSettings,
     startRecording,
     stopRecording,
+    cancelRecording,
   } = useSpeech();
 
   // Abort in-flight stream when the user switches models mid-generation.
@@ -136,16 +140,21 @@ export function InputArea() {
 
   useEffect(() => {
     if (speechError) {
-      toast.error(speechError, { duration: 8000 });
+      toast.error(speechError, {
+        duration: 8000,
+        ...(speechPermissionDenied ? {
+          action: { label: 'Open app permissions', onClick: () => void openPermissionSettings() },
+        } : {}),
+      });
     }
-  }, [speechError]);
+  }, [speechError, speechPermissionDenied, openPermissionSettings]);
 
   const handleMicClick = useCallback(async () => {
     if (speechState === 'recording') {
       try {
         const text = await stopRecording();
         if (text) {
-          setInput((prev) => (prev ? prev + ' ' + text : text));
+          await sendRecognizedSpeechRef.current(text);
         }
       } catch {
         // Error is captured in useSpeech
@@ -171,8 +180,10 @@ export function InputArea() {
     resetStream();
   }, [resetStream]);
 
-  const sendMessage = useCallback(async () => {
-    const content = input.trim();
+  const sendMessage = useCallback(async (recognizedText?: string) => {
+    const content = recognizedText
+      ? [input.trim(), recognizedText.trim()].filter(Boolean).join(' ')
+      : input.trim();
     if (!content || streamState.isStreaming) return;
     if (!selectedModel) {
       toast.error('Pick a model first (⌘K)');
@@ -562,6 +573,8 @@ export function InputArea() {
     maxTokens,
   ]);
 
+  sendRecognizedSpeechRef.current = (text) => sendMessage(text);
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -636,11 +649,12 @@ export function InputArea() {
             <MicButton
               state={speechState}
               onClick={handleMicClick}
+              onCancel={() => void cancelRecording()}
               disabled={micDisabled}
               reason={micReason}
             />
             <button
-              onClick={sendMessage}
+              onClick={() => void sendMessage()}
               disabled={streamState.isStreaming || !input.trim() || modelLoading || !selectedModel}
               title={selectedModel ? 'Send message' : 'Pick a model first (⌘K)'}
               className="p-2 rounded-xl transition-colors shrink-0 cursor-pointer disabled:opacity-30 disabled:cursor-default"

@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { transcribeAudio, fetchSpeechHealth } from '../lib/api';
+import { isAndroidNative, JarvisNative } from '../lib/android-native';
 
 export type SpeechState = 'idle' | 'recording' | 'transcribing';
 
@@ -42,6 +43,7 @@ export function useSpeech() {
   const [state, setState] = useState<SpeechState>('idle');
   const [error, setError] = useState<string | null>(null);
   const [available, setAvailable] = useState(false);
+  const [permissionDenied, setPermissionDenied] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
@@ -53,7 +55,11 @@ export function useSpeech() {
   // Prefer the browser's native speech service on mobile. Fall back to the
   // existing server transcription path when Web Speech is unavailable.
   useEffect(() => {
-    if (browserRecognitionConstructor()) {
+    if (isAndroidNative()) {
+      JarvisNative.checkMicrophonePermission()
+        .then(({ available: canRecognize }) => setAvailable(canRecognize))
+        .catch(() => setAvailable(false));
+    } else if (browserRecognitionConstructor()) {
       setAvailable(true);
     } else {
       fetchSpeechHealth()
@@ -62,6 +68,7 @@ export function useSpeech() {
     }
 
     return () => {
+      if (isAndroidNative()) void JarvisNative.cancelRecognition().catch(() => {});
       recognitionRef.current?.abort();
       recognitionResolveRef.current = null;
       recognitionRejectRef.current = null;
@@ -72,6 +79,24 @@ export function useSpeech() {
 
   const startRecording = useCallback(async (): Promise<void> => {
     setError(null);
+    setPermissionDenied(false);
+
+    if (isAndroidNative()) {
+      try {
+        let configuredLanguage = '';
+        try { configuredLanguage = localStorage.getItem('openjarvis-speech-language') || ''; } catch {}
+        await JarvisNative.startRecognition({ language: configuredLanguage || 'en-GB' });
+        setState('recording');
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Could not start Android speech recognition.';
+        const code = String((err as { code?: string })?.code ?? '');
+        const denied = code.includes('MICROPHONE_PERMISSION_DENIED') || /microphone permission/i.test(message);
+        setPermissionDenied(denied);
+        setError(message);
+        setState('idle');
+      }
+      return;
+    }
 
     const Recognition = browserRecognitionConstructor();
     if (Recognition) {
@@ -155,6 +180,22 @@ export function useSpeech() {
   }, []);
 
   const stopRecording = useCallback(async (): Promise<string> => {
+    if (isAndroidNative()) {
+      setState('transcribing');
+      try {
+        const result = await JarvisNative.stopRecognition();
+        setState('idle');
+        if (!result.text.trim()) throw new Error('No speech was detected. Try again.');
+        return result.text.trim();
+      } catch (err) {
+        setState('idle');
+        const message = err instanceof Error ? err.message : 'Speech recognition failed.';
+        const code = String((err as { code?: string })?.code ?? '');
+        setPermissionDenied(code.includes('MICROPHONE_PERMISSION_DENIED') || /microphone permission/i.test(message));
+        setError(message);
+        throw err;
+      }
+    }
     const recognition = recognitionRef.current;
     if (recognition) {
       setState('transcribing');
@@ -205,10 +246,29 @@ export function useSpeech() {
     });
   }, []);
 
+  const cancelRecording = useCallback(async (): Promise<void> => {
+    if (isAndroidNative()) await JarvisNative.cancelRecognition().catch(() => {});
+    recognitionRef.current?.abort();
+    recognitionRef.current = null;
+    mediaRecorderRef.current?.stop();
+    mediaRecorderRef.current = null;
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    streamRef.current = null;
+    chunksRef.current = [];
+    setState('idle');
+  }, []);
+
+  const openPermissionSettings = useCallback(async (): Promise<void> => {
+    if (isAndroidNative()) await JarvisNative.openAppSettings();
+  }, []);
+
   return {
     state,
     error,
     available,
+    permissionDenied,
+    openPermissionSettings,
+    cancelRecording,
     startRecording,
     stopRecording,
     isRecording: state === 'recording',

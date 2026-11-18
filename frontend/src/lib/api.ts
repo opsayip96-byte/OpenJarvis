@@ -2,6 +2,7 @@ import type { ModelInfo, SavingsData, ServerInfo } from '../types';
 import { SUPABASE_ANON_KEY, SUPABASE_URL } from './supabase';
 import { serializeToolCallArguments } from './tool-call';
 import { timeZoneHeaders } from './timezone';
+import { isAndroidNative, JarvisNative } from './android-native';
 
 // ---------------------------------------------------------------------------
 // Supabase config
@@ -17,7 +18,54 @@ export const isTauri = () => typeof window !== 'undefined' && !!window.__TAURI_I
 
 export type CloudKeyStatus = Record<string, boolean>;
 
+let _androidApiKey = '';
+
+async function reloadAndroidCloudKey(keyName: string, keyValue: string): Promise<void> {
+  const base = getBase();
+  if (!base.startsWith('https://')) {
+    throw new Error('Set an HTTPS backend URL in Settings before sending provider credentials.');
+  }
+  const response = await apiFetch('/v1/cloud/reload', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ keys: { [keyName]: keyValue } }),
+  });
+  if (!response.ok) {
+    const body = await response.text().catch(() => '');
+    throw new Error(`Backend rejected provider configuration (${response.status})${body ? `: ${body.slice(0, 240)}` : ''}`);
+  }
+}
+
+/** Load Android credentials from Keystore-backed native storage before API calls begin. */
+export async function initAndroidCredentials(): Promise<void> {
+  if (!isAndroidNative()) return;
+  const [apiKey, providerKey] = await Promise.all([
+    JarvisNative.getSecureValue({ name: 'OPENJARVIS_API_KEY' }),
+    JarvisNative.getSecureValue({ name: 'OPENROUTER_API_KEY' }),
+  ]);
+  _androidApiKey = apiKey.value;
+  if (providerKey.value && getBase().startsWith('https://')) {
+    try {
+      await reloadAndroidCloudKey('OPENROUTER_API_KEY', providerKey.value);
+    } catch {
+      // Keep the credential in Android Keystore; the AI status screen reports
+      // that its server could not be reached after the user opens the app.
+    }
+  }
+}
+
+export async function saveAndroidBackendApiKey(value: string): Promise<void> {
+  if (!isAndroidNative()) throw new Error('Android secure storage is unavailable.');
+  await JarvisNative.saveSecureValue({ name: 'OPENJARVIS_API_KEY', value: value.trim() });
+  _androidApiKey = value.trim();
+  const providerKey = await JarvisNative.getSecureValue({ name: 'OPENROUTER_API_KEY' });
+  if (value.trim() && providerKey.value) {
+    await reloadAndroidCloudKey('OPENROUTER_API_KEY', providerKey.value);
+  }
+}
+
 export async function getCloudKeyStatus(): Promise<CloudKeyStatus> {
+  if (isAndroidNative()) return JarvisNative.getSecureStatus();
   if (!isTauri()) return {};
   try {
     const { invoke } = await import('@tauri-apps/api/core');
@@ -29,6 +77,14 @@ export async function getCloudKeyStatus(): Promise<CloudKeyStatus> {
 }
 
 export async function saveCloudKey(keyName: string, keyValue: string): Promise<void> {
+  if (isAndroidNative()) {
+    const value = keyValue.trim();
+    await JarvisNative.saveSecureValue({ name: keyName, value });
+    if (keyName === 'OPENROUTER_API_KEY' && value) {
+      await reloadAndroidCloudKey(keyName, value);
+    }
+    return;
+  }
   if (!isTauri()) {
     throw new Error('Cloud API keys can be saved in the desktop app only.');
   }
@@ -83,6 +139,7 @@ export const getBase = (): string => {
 // same settings blob as the API URL, with an optional build-time env override.
 // Returns '' when unset, so a keyless local server keeps working unchanged.
 export const getApiKey = (): string => {
+  if (isAndroidNative()) return _androidApiKey;
   try {
     const raw = localStorage.getItem('openjarvis-settings');
     if (raw) {

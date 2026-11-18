@@ -10,6 +10,7 @@ import {
   getCloudKeyStatus,
   saveCloudKey,
 } from '../lib/api';
+import { isAndroidNative } from '../lib/android-native';
 
 /** Popular models that users can download from the catalogue. */
 const CATALOGUE_MODELS = [
@@ -107,10 +108,10 @@ export function CommandPalette() {
   const setCommandPaletteOpen = useAppStore((s) => s.setCommandPaletteOpen);
 
   const installedIds = new Set(models.map((m) => m.id));
-  const desktopKeyStorage = isTauri();
+  const secureKeyStorage = isTauri() || isAndroidNative();
 
   const refreshCloudKeyStatus = useCallback(async () => {
-    if (!desktopKeyStorage) {
+    if (!secureKeyStorage) {
       setCloudKeyStatus({});
       return;
     }
@@ -120,7 +121,7 @@ export function CommandPalette() {
     } catch (e: any) {
       setCloudKeyError(e?.message || 'Failed to read cloud key status');
     }
-  }, [desktopKeyStorage]);
+  }, [secureKeyStorage]);
 
   const filtered = tab === 'installed'
     ? (query
@@ -466,8 +467,8 @@ export function CommandPalette() {
             /* ── Cloud Models tab ── */
             <div className="px-4 py-2">
               <div className="text-[11px] mb-3" style={{ color: 'var(--color-text-tertiary)' }}>
-                {desktopKeyStorage
-                  ? 'Add your API keys to use cloud models. Keys are stored in secure desktop storage.'
+                {secureKeyStorage
+                  ? `Add provider keys to use cloud models. Keys are stored in ${isAndroidNative() ? 'Android Keystore' : 'secure desktop storage'}.`
                   : 'Configure cloud provider keys in the server environment to use cloud models.'}
               </div>
 
@@ -500,7 +501,7 @@ export function CommandPalette() {
                           onChange={(e) => setApiKeys((prev) => ({ ...prev, [provider.envKey]: e.target.value }))}
                           onBlur={() => handleKeyBlur(provider)}
                           placeholder={hasSavedKey ? 'Saved in secure storage' : provider.envKey}
-                          disabled={!desktopKeyStorage || isSaving}
+                          disabled={!secureKeyStorage || isSaving}
                           className="flex-1 text-xs px-2 py-1.5 bg-transparent outline-none font-mono"
                           style={{ color: 'var(--color-text)' }}
                         />

@@ -270,6 +270,8 @@ def create_app(
             "http://127.0.0.1:5173",
             "http://localhost:5174",
             "http://127.0.0.1:5174",
+            # Capacitor Android serves bundled app assets from this secure WebView origin.
+            "https://localhost",
             # Tauri 2 production webview origins:
             #   macOS / Linux / iOS  -> tauri://localhost
             #   Windows / Android    -> http://tauri.localhost (default),

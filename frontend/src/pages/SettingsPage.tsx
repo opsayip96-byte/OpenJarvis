@@ -222,14 +222,14 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 
 function SettingRow({ label, description, children }: { label: string; description?: string; children: React.ReactNode }) {
   return (
-    <div className="flex items-center justify-between py-3" style={{ borderBottom: '1px solid var(--color-border-subtle)' }}>
-      <div className="min-w-0">
+    <div className="flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:justify-between" style={{ borderBottom: '1px solid var(--color-border-subtle)' }}>
+      <div className="min-w-0 sm:flex-1">
         <div className="text-sm" style={{ color: 'var(--color-text)' }}>{label}</div>
         {description && (
           <div className="text-xs mt-0.5 break-words" style={{ color: 'var(--color-text-tertiary)' }}>{description}</div>
         )}
       </div>
-      <div>{children}</div>
+      <div className="w-full min-w-0 sm:w-auto sm:shrink-0">{children}</div>
     </div>
   );
 }
@@ -766,7 +766,7 @@ export function SettingsPage() {
                 value={settings.apiUrl}
                 onChange={(e) => { updateSettings({ apiUrl: e.target.value }); showSaved(); }}
                 placeholder={androidApp ? 'https://your-jarvis-server.example' : 'http://localhost:8000'}
-                className="text-sm px-3 py-1.5 rounded-lg outline-none w-56"
+                className="text-sm px-3 py-1.5 rounded-lg outline-none w-full sm:w-56 max-w-full"
                 style={{
                   background: 'var(--color-bg-secondary)',
                   color: 'var(--color-text)',
@@ -778,7 +778,7 @@ export function SettingsPage() {
               label="API key"
               description={androidApp ? 'Stored encrypted with Android Keystore. Sent only to your HTTPS backend.' : 'Required only if the server was started with an API key'}
             >
-              <div className="flex flex-col items-end gap-1.5">
+              <div className="flex w-full flex-col items-stretch sm:items-end gap-1.5">
                 <div className="flex items-center gap-2">
                   <input
                     type="password"
@@ -788,7 +788,7 @@ export function SettingsPage() {
                       : (updateSettings({ apiKey: e.target.value }), showSaved())}
                     placeholder={androidApp && androidApiKeySaved ? 'Saved securely' : 'OPENJARVIS_API_KEY'}
                     autoComplete="off"
-                    className="text-sm px-3 py-1.5 rounded-lg outline-none w-56"
+                    className="text-sm px-3 py-1.5 rounded-lg outline-none w-full sm:w-56 max-w-full"
                     style={{ background: 'var(--color-bg-secondary)', color: 'var(--color-text)', border: '1px solid var(--color-border)' }}
                   />
                   {androidApp && (
@@ -809,7 +809,7 @@ export function SettingsPage() {
               <select
                 value={srcKind}
                 onChange={(e) => { setSrcKind(e.target.value as InferenceSource['kind']); setSrcMsg(''); }}
-                className="text-sm px-3 py-1.5 rounded-lg outline-none w-56"
+                className="text-sm px-3 py-1.5 rounded-lg outline-none w-full min-w-0 sm:w-56 max-w-full"
                 style={{ background: 'var(--color-bg-secondary)', color: 'var(--color-text)', border: '1px solid var(--color-border)' }}
               >
                 <option value="ollama">Bundled Ollama (default)</option>

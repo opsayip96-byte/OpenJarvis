@@ -59,6 +59,8 @@ class NativeOpenHandsAgent(ToolUsingAgent):
     """Native CodeAct agent -- generates and executes Python code."""
 
     agent_id = "native_openhands"
+    system_prompt_key = "native_openhands"
+    system_prompt_template = OPENHANDS_SYSTEM_PROMPT
     _default_temperature = 0.7
     _default_max_tokens = 2048
     _default_max_turns = 3
@@ -290,7 +292,7 @@ class NativeOpenHandsAgent(ToolUsingAgent):
 
         tool_descriptions = build_tool_descriptions(self._tools)
         prompt_template = (
-            load_system_prompt_override("native_openhands") or OPENHANDS_SYSTEM_PROMPT
+            load_system_prompt_override(self.system_prompt_key) or self.system_prompt_template
         )
         system_prompt = prompt_template.format(
             tool_descriptions=tool_descriptions,

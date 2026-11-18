@@ -71,6 +71,12 @@ COPY --from=builder /usr/local /usr/local
 COPY --from=builder /app /app
 WORKDIR /app
 
+# Render's dashboard dockerCommand begins with "serve" and overrides the
+# image ENTRYPOINT. Provide that executable explicitly and forward to the
+# installed OpenJarvis CLI so the service starts as "jarvis serve ...".
+RUN printf '#!/bin/sh\\nexec jarvis serve "$@"\\n' > /usr/local/bin/serve && \\
+    chmod 0755 /usr/local/bin/serve
+
 # Run as an unprivileged user — the server needs no root privileges, so dropping
 # them limits the blast radius of a compromise (#565). The app writes only to
 # $HOME (config/cache/state), which is owned by this user.

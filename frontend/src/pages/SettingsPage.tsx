@@ -607,7 +607,7 @@ export function SettingsPage() {
     fetchTtsHealth()
       .then((h) => setTtsBackend(h))
       .catch(() => setTtsBackend({ available: false }));
-  }, []);
+  }, [settings.apiUrl]);
 
   const showSaved = () => {
     setSaved(true);

@@ -161,6 +161,16 @@ async def create_agent(req: AgentCreateRequest, request: Request):
 
         tool = AgentSpawnTool()
         params = {"agent_type": req.agent_type}
+        if req.agent_type == "coding_agent" and not req.tools:
+            params["tools"] = ",".join([
+                "file_read",
+                "file_write",
+                "apply_patch",
+                "shell_exec",
+                "code_interpreter",
+                "git_status",
+                "git_diff",
+            ])
         if req.tools:
             params["tools"] = ",".join(req.tools)
         if req.agent_id:

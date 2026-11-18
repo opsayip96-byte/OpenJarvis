@@ -82,8 +82,7 @@ USER openjarvis
 
 EXPOSE 8000
 
-# Keep `jarvis` as the image entrypoint so Docker and Compose command overrides
-# remain subcommands (for example, `docker run IMAGE serve ...`). Platforms
-# such as Render replace CMD while preserving this entrypoint.
-ENTRYPOINT ["/bin/sh", "/app/deploy/docker/render-entrypoint.sh"]
+# Keep the installed CLI as the direct entrypoint. Render supplies the
+# "serve ..." arguments through its Docker command override.
+ENTRYPOINT ["jarvis"]
 CMD ["serve", "--host", "0.0.0.0", "--port", "8000"]

@@ -14,7 +14,7 @@ export interface ChatRequest {
 }
 
 function requireBackendBase(): string {
-  const base = getBase().replace(/\\/+$/, '');
+  const base = getBase().replace(/\/+$/, '');
   if (!base) {
     throw new Error(
       'JARVIS backend is not configured. Open Settings → Connection → API URL and enter your HTTPS backend address.',
@@ -99,10 +99,10 @@ export async function* streamChat(
       const { done, value } = await reader.read();
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\\n');
+      const lines = buffer.split('\n');
       buffer = lines.pop() || '';
       for (const line of lines) {
-        const event = parseLine(line.replace(/\\r$/, ''));
+        const event = parseLine(line.replace(/\r$/, ''));
         if (event) {
           if (event.data === '[DONE]') return;
           yield event;
@@ -111,7 +111,7 @@ export async function* streamChat(
     }
     buffer += decoder.decode();
     if (buffer.trim()) {
-      const event = parseLine(buffer.replace(/\\r$/, ''));
+      const event = parseLine(buffer.replace(/\r$/, ''));
       if (event && event.data !== '[DONE]') yield event;
     }
   } finally {
@@ -126,7 +126,7 @@ export async function* streamResearch(
 ): AsyncGenerator<ResearchEvent> {
   // /api/research is mounted at the server root — strip any trailing /v1
   // from the base so configurations like "http://host:8000/v1" still resolve.
-  const base = requireBackendBase().replace(/\\/v1\\/?$/, '');
+  const base = requireBackendBase().replace(/\/v1\/?$/, '');
   const response = await fetch(`${base}/api/research`, {
     method: 'POST',
     headers: authHeaders({ 'Content-Type': 'application/json' }),
@@ -147,7 +147,7 @@ export async function* streamResearch(
       if (done) break;
 
       buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\\n');
+      const lines = buffer.split('\n');
       buffer = lines.pop() || '';
 
       for (const line of lines) {

@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { Send, Square, Paperclip, Search } from 'lucide-react';
+import { Send, Square, Paperclip, Search, Plus, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAppStore, generateId } from '../../lib/store';
 import { streamChat, streamResearch } from '../../lib/sse';
@@ -20,6 +20,33 @@ import type {
   TokenUsage,
   ToolCallInfo,
 } from '../../types';
+
+interface PendingImage {
+  id: string;
+  file: File;
+  previewUrl: string;
+  base64: string;
+}
+
+async function readImage(file: File): Promise<PendingImage> {
+  const base64 = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error(`Could not read ${file.name}`));
+    reader.onload = () => {
+      const result = String(reader.result || '');
+      const comma = result.indexOf(',');
+      if (comma < 0) reject(new Error(`Invalid image data: ${file.name}`));
+      else resolve(result.slice(comma + 1));
+    };
+    reader.readAsDataURL(file);
+  });
+  return {
+    id: generateId(),
+    file,
+    previewUrl: URL.createObjectURL(file),
+    base64,
+  };
+}
 
 // While Deep Research is toggled on, poll connected sources for sync
 // progress so we can surface "Searching over N items — sync in progress"
@@ -81,6 +108,8 @@ function useResearchCorpusSync(enabled: boolean): {
 
 export function InputArea() {
   const [input, setInput] = useState('');
+  const [images, setImages] = useState<PendingImage[]>([]);
+  const imagePickerRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -171,6 +200,42 @@ export function InputArea() {
     el.style.height = Math.min(el.scrollHeight, 200) + 'px';
   }, [input]);
 
+  const handleImageSelection = useCallback(async (files: FileList | null) => {
+    if (!files?.length) return;
+    const selected = Array.from(files);
+    if (images.length + selected.length > 4) {
+      toast.error('Attach up to 4 images per message.');
+      return;
+    }
+    if (selected.some((file) => !file.type.startsWith('image/'))) {
+      toast.error('Only image files are supported in this first attachment milestone.');
+      return;
+    }
+    if (selected.some((file) => file.size > 6 * 1024 * 1024)) {
+      toast.error('Each image must be 6 MiB or smaller.');
+      return;
+    }
+    const combined = [...images.reduce((sum, item) => sum + item.file.size, 0), ...selected.map((file) => file.size)].reduce((sum, size) => sum + size, 0);
+    if (combined > 12 * 1024 * 1024) {
+      toast.error('The combined image size must be 12 MiB or smaller.');
+      return;
+    }
+    try {
+      const prepared = await Promise.all(selected.map(readImage));
+      setImages((current) => [...current, ...prepared]);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not read image.');
+    }
+  }, [images]);
+
+  const removeImage = useCallback((id: string) => {
+    setImages((current) => {
+      const removed = current.find((item) => item.id === id);
+      if (removed) URL.revokeObjectURL(removed.previewUrl);
+      return current.filter((item) => item.id !== id);
+    });
+  }, []);
+
   const stopStreaming = useCallback(() => {
     abortRef.current?.abort();
     if (timerRef.current) {
@@ -184,13 +249,19 @@ export function InputArea() {
     const content = recognizedText
       ? [input.trim(), recognizedText.trim()].filter(Boolean).join(' ')
       : input.trim();
-    if (!content || streamState.isStreaming) return;
+    if ((!content && images.length === 0) || streamState.isStreaming) return;
+    if (deepResearch && images.length > 0) {
+      toast.error('Turn off Deep Research to send images.');
+      return;
+    }
     if (!selectedModel) {
       toast.error('Pick a model first (⌘K)');
       return;
     }
 
     setInput('');
+    const outgoingImages = [...images];
+    setImages([]);
 
     let convId = activeId;
     if (!convId) {
@@ -202,6 +273,12 @@ export function InputArea() {
       role: 'user',
       content,
       timestamp: Date.now(),
+      attachments: outgoingImages.map((item) => ({
+        id: item.id,
+        name: item.file.name,
+        mimeType: item.file.type || 'application/octet-stream',
+        sizeBytes: item.file.size,
+      })),
     };
     addMessage(convId, userMsg);
 
@@ -210,7 +287,11 @@ export function InputArea() {
     const apiMessages = currentMessages.map((m) => ({
       role: m.role,
       content: m.content,
+      ...(m.id === userMsg.id && outgoingImages.length > 0
+        ? { images: outgoingImages.map((item) => item.base64) }
+        : {}),
     }));
+    outgoingImages.forEach((item) => URL.revokeObjectURL(item.previewUrl));
 
     const assistantMsg: ChatMessage = {
       id: generateId(),
@@ -571,6 +652,7 @@ export function InputArea() {
     deepResearch,
     temperature,
     maxTokens,
+    images,
   ]);
 
   sendRecognizedSpeechRef.current = (text) => sendMessage(text);
@@ -616,6 +698,19 @@ export function InputArea() {
           </div>
         )}
       </div>
+      {images.length > 0 && (
+        <div className="flex flex-wrap gap-2 mb-2" aria-label="Selected images">
+          {images.map((item) => (
+            <div key={item.id} className="relative rounded-xl overflow-hidden" style={{ width: 76, height: 76, border: '1px solid var(--color-border)' }}>
+              <img src={item.previewUrl} alt={item.file.name} className="w-full h-full object-cover" />
+              <button type="button" onClick={() => removeImage(item.id)} aria-label={`Remove ${item.file.name}`} className="absolute top-1 right-1 rounded-full p-1" style={{ background: 'rgba(0,0,0,.72)', color: 'white' }}>
+                <X size={12} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      <input ref={imagePickerRef} type="file" accept="image/*" multiple hidden onChange={(event) => { void handleImageSelection(event.target.files); event.currentTarget.value = ''; }} />
       <div
         className="flex items-center gap-2 rounded-2xl px-4 py-3 transition-shadow"
         style={{
@@ -624,6 +719,9 @@ export function InputArea() {
           boxShadow: 'var(--shadow-sm)',
         }}
       >
+        <button type="button" onClick={() => imagePickerRef.current?.click()} disabled={streamState.isStreaming || modelLoading} aria-label="Attach images" title="Attach images" className="p-2 rounded-xl shrink-0 disabled:opacity-40" style={{ color: 'var(--color-text-secondary)' }}>
+          <Plus size={19} />
+        </button>
         <textarea
           ref={textareaRef}
           value={input}
@@ -655,12 +753,12 @@ export function InputArea() {
             />
             <button
               onClick={() => void sendMessage()}
-              disabled={streamState.isStreaming || !input.trim() || modelLoading || !selectedModel}
+              disabled={streamState.isStreaming || (!input.trim() && images.length === 0) || modelLoading || !selectedModel}
               title={selectedModel ? 'Send message' : 'Pick a model first (⌘K)'}
               className="p-2 rounded-xl transition-colors shrink-0 cursor-pointer disabled:opacity-30 disabled:cursor-default"
               style={{
-                background: input.trim() ? 'var(--color-accent)' : 'var(--color-bg-tertiary)',
-                color: input.trim() ? 'white' : 'var(--color-text-tertiary)',
+                background: input.trim() || images.length > 0 ? 'var(--color-accent)' : 'var(--color-bg-tertiary)',
+                color: input.trim() || images.length > 0 ? 'white' : 'var(--color-text-tertiary)',
               }}
             >
               <Send size={16} />
@@ -671,7 +769,7 @@ export function InputArea() {
       <div className="flex items-center justify-center mt-2 text-[11px]" style={{ color: 'var(--color-text-tertiary)' }}>
         <span>
           <kbd className="font-mono">Enter</kbd> to send &middot;{' '}
-          <kbd className="font-mono">Shift+Enter</kbd> for new line
+          <kbd className="font-mono">Shift+Enter</kbd> for new line · <kbd className="font-mono">＋</kbd> to attach images
         </span>
       </div>
     </div>

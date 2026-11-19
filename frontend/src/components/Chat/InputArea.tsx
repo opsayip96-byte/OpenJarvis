@@ -261,6 +261,10 @@ export function InputArea() {
       toast.error('Pick a model first (⌘K)');
       return;
     }
+    if (teachMode && (deepResearch || images.length > 0)) {
+      toast.error('Turn off Deep Research and remove attachments before teaching. Only local text lessons are supported.');
+      return;
+    }
     if (teachMode) {
       try {
         const local = await JarvisLocalModel.getModelStatus();
@@ -727,7 +731,7 @@ export function InputArea() {
         </div>
         {teachMode && (
           <div className="text-[11px] leading-snug" style={{ color: 'var(--color-text-secondary)' }}>
-            Teaching mode uses your imported local model only. Each prompt and response is saved privately as a pending lesson for review and later training. It does not change model weights immediately.
+            Teaching mode uses your imported local model only. Text examples are saved privately for review and later training. Do not include passwords, private messages or sensitive information. It does not change model weights immediately.
           </div>
         )}
         {deepResearch && corpusSync.syncing && corpusSync.itemsSynced > 0 && (

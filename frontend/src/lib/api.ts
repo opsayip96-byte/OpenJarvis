@@ -130,6 +130,11 @@ export const getBase = (): string => {
   if (settingsUrl) return settingsUrl;
   if (import.meta.env.VITE_API_URL) return import.meta.env.VITE_API_URL;
   if (isTauri()) return _tauriApiBase || DESKTOP_API_FALLBACK;
+  // The Android APK is a standalone Capacitor app, so a relative API path
+  // resolves to capacitor://localhost and cannot reach the cloud backend.
+  // Keep a production HTTPS default while allowing the user-configured URL
+  // above to override it.
+  if (isAndroidNative()) return 'https://openjarvis-server-qg4j.onrender.com';
   return '';
 };
 
@@ -342,24 +347,16 @@ export async function checkHealth(): Promise<boolean> {
       return false;
     }
   }
-  // Android is a standalone native app. Its WebView origin is only the
-  // packaged UI, not the JARVIS server, so relative URLs can falsely report
-  // "Connected" when the app shell itself returns HTTP 200.
-  const configuredBase = getBase().replace(/\/+$/, '');
-  if (isAndroidNative()) {
-    if (!configuredBase || !configuredBase.startsWith('https://')) return false;
-    try {
-      const response = await fetch(`${configuredBase}/health`, {
-        cache: 'no-store',
-        signal: AbortSignal.timeout(8000),
-      });
-      return response.ok;
-    } catch {
-      return false;
-    }
-  }
-
-  // In browser mode, allow relative health probes for same-origin deployments.
+  // In the browser, hit /health relative to the page origin so the request
+  // flows through whatever path is already serving the SPA — the Vite
+  // proxy in dev, FastAPI's static mount in prod. This avoids the
+  // false-negative "Cannot reach backend" banner when getBase() points at
+  // an absolute URL the browser can't reach directly.
+  //
+  // If /health itself fails for any reason (proxy quirk, stale service
+  // worker, etc.) fall back to an arbitrary API endpoint we know the rest
+  // of the app polls successfully. If THAT also fails we genuinely can't
+  // reach the backend.
   const probe = async (url: string): Promise<boolean> => {
     try {
       const res = await fetch(url, { cache: 'no-store' });

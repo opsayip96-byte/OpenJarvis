@@ -76,11 +76,11 @@ export function listPendingLessons(): JarvisLesson[] { return readLessons(); }
  * they do not modify GGUF weights or treat unapproved suggestions as truth.
  */
 export function getApprovedLearningExamples(query: string, limit = 4): Array<{ prompt: string; answer: string }> {
-  const terms = new Set((query.toLocaleLowerCase().match(/[\\p{L}\\p{N}]{3,}/gu) ?? []));
+  const terms = new Set((query.toLocaleLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? []));
   const approved = readLessons()
     .filter((lesson) => lesson.status === 'approved' && lesson.targetResponse.trim())
     .map((lesson) => {
-      const promptTerms = (lesson.prompt.toLocaleLowerCase().match(/[\\p{L}\\p{N}]{3,}/gu) ?? []);
+      const promptTerms = (lesson.prompt.toLocaleLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? []);
       const overlap = promptTerms.reduce((score, term) => score + (terms.has(term) ? 1 : 0), 0);
       return { lesson, score: overlap };
     });

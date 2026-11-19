@@ -1,0 +1,7 @@
+# Training environment only. This does not add a runtime API dependency.
+torch>=2.6.0
+transformers>=4.57.0
+trl>=0.24.0
+peft>=0.18.0
+accelerate>=1.10.0
+safetensors>=0.6.0

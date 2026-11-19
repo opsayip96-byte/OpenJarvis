@@ -1,4 +1,4 @@
-# JARVIS Offline Android Core: Architecture Decision
+# JARVIS Android AI: Internet-Connected Core with Optional Offline Mode
 
 Status: Proposed implementation baseline
 Target device: iQOO Neo 10R, 8 GB physical RAM, 256 GB storage
@@ -7,13 +7,17 @@ Production impact: none. This branch is isolated from Render's deployed backend.
 
 ## Product requirement
 
-JARVIS must be able to load its language model, hold a conversation, retrieve local memories, plan tasks, and execute approved on-device tools with Wi-Fi and mobile data disabled. Cloud providers and Render are optional add-ons only. The APK must never silently fall back to a remote model when Offline Mode is selected.
+JARVIS is internet-connected by default. Internet access is a required part of its normal operating experience for live web research, current information, online integrations, updates and remote resources. Offline operation is an optional fallback, not the primary product mode.
 
-This is a practical local assistant, not a claim of sentience, consciousness, unlimited intelligence, or fictional omnipotence.
+The core assistant identity and JARVIS-specific intelligence must remain owned by this project. The target architecture runs the JARVIS model on the user's Android device, while a permission-controlled online research and integration layer gives it access to the wider internet. Internet access must not silently turn JARVIS into a thin wrapper around a third-party hosted chatbot. No paid APIs, surprise charges, or undisclosed transmission of private memory are allowed. Any optional external model provider must be explicitly configured and clearly labelled, and is not the default JARVIS brain.
+
+When Offline Mode is enabled, JARVIS must continue local chat, approved local memory and supported device tools without making model/chat network requests. Features that genuinely require the internet must be clearly marked unavailable until connectivity returns.
+
+This is a practical personal assistant, not a claim of sentience, consciousness, unlimited intelligence, or fictional omnipotence.
 
 ## Model ownership and intelligence strategy
 
-JARVIS is a private personal AI project, not a product or publishing project. The goal is to own and control the complete local assistant stack: model artifact, JARVIS-specific adapter, system/orchestration code, local memory, tool registry and Android integration. It must not need a provider API or remote server at runtime.
+JARVIS is a private personal AI project, not a product or publishing project. The goal is to own and control the assistant stack: model artifact, JARVIS-specific adapter, system/orchestration code, memory, tool registry, online research layer and Android integration. The normal experience uses internet access, but its core reasoning model must remain available locally so a remote provider is not a runtime dependency.
 
 There are two distinct meanings of “own AI”:
 
@@ -54,7 +58,7 @@ First implementation runtime: llama.cpp Android arm64 native library, integrated
 4. Local Memory: encrypted/private SQLite store for conversation metadata and user-approved durable facts; FTS search first, optional local embeddings later.
 5. Device Tools: explicit native capabilities such as app launch, timers, reminders, approved file search and selected settings intents. Each tool declares permissions and risk level. Consequential actions require confirmation.
 6. Offline Voice: offline speech-to-text and on-device TTS where available; user-visible microphone permission and push-to-talk first. Wake-word listening is a later opt-in due to battery and background restrictions.
-7. Connectivity Policy: Offline Mode blocks all model/chat HTTP requests. Cloud mode is separately selected and clearly labelled. Local memory and tool execution remain local in either mode.
+7. Connectivity Policy: Internet-connected mode is the default and enables web search, live sources, updates and explicitly authorised integrations. Local model inference remains the core JARVIS brain. Offline Mode is an explicit fallback that blocks model/chat HTTP requests and keeps supported local memory and device tools available. Never silently switch to a third-party hosted model.
 
 ## Security and privacy
 
@@ -67,14 +71,17 @@ First implementation runtime: llama.cpp Android arm64 native library, integrated
 
 ## Build sequence
 
-### Phase 1: local inference proof
+### Phase 1: JARVIS-owned inference proof
 - Add native llama.cpp runtime and a minimal Kotlin plugin API: getRuntimeStatus, listModels, downloadModel, loadModel, unloadModel, generate, cancelGeneration.
 - Add a model manager and benchmark Qwen3.5-2B Q4 first, then Qwen3.5-4B Q4.
-- Test with network disabled after model download.
+- Test local generation both with internet connected and with network disabled after model download.
 - Record actual memory, latency, tokens/second, temperature and battery results on the iQOO.
 
-### Phase 2: actual JARVIS orchestration
-- Make local inference the default and fully functional path; keep cloud inference absent or an explicitly separate optional mode.
+### Phase 2: actual JARVIS orchestration and internet access
+- Make the JARVIS-owned model the primary reasoning path in the normal internet-connected experience.
+- Add a secure online research layer with source retrieval, citations, freshness checks, domain controls and explicit network permissions.
+- Keep third-party hosted model inference out of the default path; any provider fallback must be a separately configured, clearly labelled opt-in.
+- Add an explicit Offline Mode that disables network calls while preserving supported local capabilities.
 - Implement local system prompt, streaming, conversation history and explicit memory retrieval.
 - Add a typed tool loop with allowlisted tools, bounded steps, permission checks and result verification.
 - Display the actual local model, runtime and installed tools; never invent capabilities.
@@ -87,8 +94,8 @@ First implementation runtime: llama.cpp Android arm64 native library, integrated
 - Validate the adapter against the base model, merge or package it for local inference, and ship the resulting weights to the phone.
 - Keep model lineage, license, dataset provenance and rollback artifact.
 
-### Phase 3: offline voice and Android tools
-- Integrate offline speech recognition and local TTS.
+### Phase 3: voice and Android tools
+- Integrate reliable speech recognition and local TTS, with offline speech recognition as a supported fallback where model/device constraints permit.
 - Add permission-controlled device integrations.
 - Add foreground service only for user-enabled ongoing sessions; respect Android battery/background limits.
 
@@ -115,15 +122,17 @@ Acceptance: JARVIS should express emotions convincingly and consistently through
 - Scale parameter count only after the smaller model demonstrates stable training, measurable gains and a lawful, high-quality data supply.
 
 ### Phase 5: release hardening
-- Test airplane-mode conversation, app restart, phone restart, memory persistence, cancellation, low-storage recovery, model corruption, thermal throttling, battery use and process death.
+- Test internet-connected research, source/citation handling, permission boundaries, offline-mode conversation, app restart, phone restart, memory persistence, cancellation, low-storage recovery, model corruption, thermal throttling, battery use and process death.
 - Produce debug APK and device-specific benchmark report.
 - Keep Render and cloud model paths unchanged until local mode passes acceptance tests.
 
 ## Acceptance criteria
 
 - First-time model download is explicit, resumable and checksum-verified.
-- Once downloaded, chat works in airplane mode after force-stop and relaunch.
+- Internet-connected mode provides working live research and online integrations without handing private memory to external providers by default.
+- Once downloaded, core local chat works in airplane mode after force-stop and relaunch.
 - No HTTP request is made for local inference or local memory in Offline Mode.
+- Network-dependent features clearly explain when connectivity is required.
 - Local chat can retrieve an approved memory after app restart.
 - Tool calls are typed, allowlisted, permission-checked and result-verified.
 - The UI never claims a tool or device permission exists unless the native plugin confirms it.
@@ -140,4 +149,4 @@ Acceptance: JARVIS should express emotions convincingly and consistently through
 
 ## Rollout guardrails
 
-Do not merge this branch into the Render production branch or change production environment variables as part of the offline implementation. Do not add paid services. Do not bundle a multi-gigabyte model in the APK. Do not claim offline capability until the airplane-mode acceptance test passes on the target phone.
+Do not merge this branch into the Render production branch or change production environment variables as part of the offline implementation. Do not add paid services. Do not bundle a multi-gigabyte model in the APK. Do not claim offline capability until the airplane-mode acceptance test passes on the target phone. Do not claim internet research works until source retrieval, citation and failure handling are verified.

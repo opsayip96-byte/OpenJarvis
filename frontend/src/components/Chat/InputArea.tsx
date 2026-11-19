@@ -12,7 +12,7 @@ import {
 } from '../../lib/chat-telemetry';
 import { MicButton } from './MicButton';
 import { useSpeech } from '../../hooks/useSpeech';
-import { savePendingLesson } from '../../lib/jarvis-learning';
+import { savePendingLesson, saveTeachingInstruction } from '../../lib/jarvis-learning';
 import { JarvisLocalModel } from '../../lib/local-model';
 import type {
   ChatMessage,
@@ -272,8 +272,11 @@ export function InputArea() {
           toast.error('Import a local GGUF model before teaching. Teaching mode never sends lesson prompts to a cloud model.');
           return;
         }
-      } catch {
-        toast.error('Could not verify the local JARVIS model. Teaching is paused for privacy.');
+        // The instruction is useful immediately as private local context.
+        // The generated answer below is only a suggestion, never trusted as a target label.
+        saveTeachingInstruction(content);
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Could not save the local teaching instruction. Teaching is paused for privacy.');
         return;
       }
     }
@@ -630,7 +633,7 @@ export function InputArea() {
       if (teachMode && content && accumulatedContent && !accumulatedContent.startsWith('Error:')) {
         try {
           savePendingLesson(content, accumulatedContent);
-          toast.success('Lesson saved privately for review. Model weights have not changed yet.');
+          toast.success('Instruction saved to JARVIS memory. Review its suggested answer and approve a correct target before training.');
         } catch {
           toast.error('Could not save this teaching example on this device.');
         }

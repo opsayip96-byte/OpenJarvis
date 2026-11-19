@@ -47,7 +47,7 @@ public class JarvisInferencePlugin extends Plugin {
                 call.resolve(result);
             } catch (Throwable error) {
                 loaded = false;
-                call.reject("Local inference failed: " + error.getMessage(), "INFERENCE_INIT_FAILED", error);
+                call.reject("Local inference failed: " + error.getMessage(), "INFERENCE_INIT_FAILED");
             }
         });
     }
@@ -67,7 +67,7 @@ public class JarvisInferencePlugin extends Plugin {
                 result.put("local", true);
                 call.resolve(result);
             } catch (Throwable error) {
-                call.reject("Local generation failed: " + error.getMessage(), "GENERATION_FAILED", error);
+                call.reject("Local generation failed: " + error.getMessage(), "GENERATION_FAILED");
             }
         });
     }
@@ -76,7 +76,7 @@ public class JarvisInferencePlugin extends Plugin {
     public void unloadModel(PluginCall call) {
         EXECUTOR.execute(() -> {
             try { nativeUnload(); loaded = false; call.resolve(new JSObject().put("loaded", false)); }
-            catch (Throwable error) { call.reject("Could not unload local model.", "MODEL_UNLOAD_FAILED", error); }
+            catch (Throwable error) { call.reject("Could not unload local model.", "MODEL_UNLOAD_FAILED"); }
         });
     }
 

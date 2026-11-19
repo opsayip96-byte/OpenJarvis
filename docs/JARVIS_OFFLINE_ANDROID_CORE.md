@@ -20,13 +20,13 @@ There are two distinct meanings of “own AI”:
 - Own assistant intelligence: start from an openly licensed pretrained model, then create a JARVIS-specific fine-tune/LoRA adapter, tool-use training data, evaluation suite, memory and orchestration. The resulting local model files and assistant runtime are controlled by this project.
 - New foundation model from scratch: define and pretrain new weights/tokenizer on a large curated corpus, then post-train for instruction following, reasoning and tool use. This requires substantial compute and data and is not feasible to do to frontier quality on an 8 GB phone.
 
-Recommended path: build JARVIS's own assistant intelligence on top of an open-weight base first, then fine-tune a private adapter. If the user later wants fully independent base weights, treat training a small model from scratch as a separate research phase, not a promise of superhuman intelligence.
+Chosen path C: (1) build and benchmark a local base model, (2) create JARVIS's private assistant dataset and evaluation suite, (3) fine-tune a JARVIS-specific LoRA/PEFT adapter and package its local weights, (4) build a separate foundation-model research track with our own tokenizer, data pipeline and small pretraining experiments. The foundation-model track begins with a small educational/research model and scales only if compute, data quality and measured results justify it. It is not feasible to train a frontier-level model on the 8 GB phone.
 
 ## Model decision
 
-First device benchmark candidate: Qwen3.5-2B Q4_K_M GGUF (approximately 1.31 GB in one published quantization). It is the safer first fit for an 8 GB phone and is officially listed as a 2B-parameter model under Apache-2.0. It is still a compact model, not a frontier model. See https://huggingface.co/Qwen/Qwen3.5-2B and https://huggingface.co/SoAIHQ/Qwen3.5-2B-GGUF.
+First device benchmark candidate: Qwen3.5-2B Q4_K_M GGUF (approximately 1.31 GB). The upstream Qwen model card lists Apache-2.0; verify the exact quantized repository's provenance and license before using it. It is the safer first fit for an 8 GB phone, but remains a compact model, not a frontier model. Official model: https://huggingface.co/Qwen/Qwen3.5-2B . Candidate GGUF and checksum: https://huggingface.co/SoAIHQ/Qwen3.5-2B-GGUF.
 
-Higher-capability candidate: Qwen3.5-4B Q4_K_M GGUF (approximately 2.8 GB in one published quantization). Only promote it after measuring peak memory, speed, heat, battery and process stability on the actual iQOO. See https://huggingface.co/Qwen/Qwen3.5-4B and https://huggingface.co/SoAIHQ/Qwen3.5-4B-GGUF.
+Higher-capability candidate: Qwen3.5-4B Q4_K_M GGUF (approximately 2.7-3.03 GB depending on the quantization artifact). Only promote it after measuring peak memory, speed, heat, battery and process stability on the actual iQOO. Official GGUF repository: https://huggingface.co/ggml-org/Qwen3.5-4B-GGUF.
 
 Do not assume the largest model is best on this phone. Start with a short 2K-4K context, one resident model, bounded KV cache and memory-mapped weights where supported. Model files are downloaded once with explicit consent, then inference works offline. Model files are not bundled in the APK.
 
@@ -89,7 +89,14 @@ First implementation runtime: llama.cpp Android arm64 native library, integrated
 - Add permission-controlled device integrations.
 - Add foreground service only for user-enabled ongoing sessions; respect Android battery/background limits.
 
-### Phase 4: release hardening
+### Phase 4: foundation-model research track
+- Define a documented tokenizer, architecture, data mixture, deduplication and filtering policy, data provenance, licensing and evaluation split before training.
+- Start with a small decoder-only research model (for example 50M-150M parameters) to validate the full pretraining pipeline and understand loss curves, data quality and checkpoints.
+- Train on a separate capable workstation or user-controlled compute environment; the phone is the inference target, not the pretraining machine.
+- Compare the scratch-trained model against the fine-tuned open-weight JARVIS model on the same held-out evaluation suite. Do not replace the stronger model merely because the scratch model is ours.
+- Scale parameter count only after the smaller model demonstrates stable training, measurable gains and a lawful, high-quality data supply.
+
+### Phase 5: release hardening
 - Test airplane-mode conversation, app restart, phone restart, memory persistence, cancellation, low-storage recovery, model corruption, thermal throttling, battery use and process death.
 - Produce debug APK and device-specific benchmark report.
 - Keep Render and cloud model paths unchanged until local mode passes acceptance tests.

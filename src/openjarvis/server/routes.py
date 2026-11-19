@@ -485,7 +485,7 @@ def _explicit_remember_text(messages) -> str | None:
     action_starters = re.compile(
         r"^(?:confirm|explain|list|tell|show|describe|summari[sz]e|"
         r"answer|calculate|find|search|compare|write|draft|generate|"
-        r"what|why|how|can you|could you|please)\\b",
+        r"what|why|how|can you|could you|please)\b",
         re.IGNORECASE,
     )
 
@@ -493,7 +493,7 @@ def _explicit_remember_text(messages) -> str | None:
         if message.role != "user" or not message.content:
             continue
         match = re.match(
-            r"^\\s*remember\\s+(?:this|that)\\s*[:,-]?\\s+(.+?)\\s*$",
+            r"^\s*remember\s+(?:this|that)\s*[:,-]?\s+(.+?)\s*$",
             message.content,
             re.IGNORECASE | re.DOTALL,
         )
@@ -507,7 +507,7 @@ def _explicit_remember_text(messages) -> str | None:
         # Keep consecutive declarative sentences, but drop a trailing task
         # request. This retains compound facts while avoiding saving the
         # instruction that followed the fact as if it were personal memory.
-        sentences = re.split(r"(?<=[.!?])\\s+", text)
+        sentences = re.split(r"(?<=[.!?])\s+", text)
         fact_sentences: list[str] = []
         for sentence in sentences:
             candidate = sentence.strip()

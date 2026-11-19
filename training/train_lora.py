@@ -49,7 +49,7 @@ def load_records(path: Path) -> list[dict]:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--base-model", default="Qwen/Qwen3-1.7B-Base")
+    parser.add_argument("--base-model", default="Qwen/Qwen3-1.7B")
     parser.add_argument("--train", type=Path, default=Path("training/data/jarvis_seed_sft.jsonl"))
     parser.add_argument("--output", type=Path, default=Path("training/output/jarvis-lora"))
     parser.add_argument("--epochs", type=float, default=3.0)
@@ -72,7 +72,7 @@ def main() -> None:
     # message dictionaries to TRL's text dataset pipeline.
     rendered = []
     for row in records:
-        text = tokenizer.apply_chat_template(row["messages"], tokenize=False, add_generation_prompt=False)
+        text = tokenizer.apply_chat_template(row["messages"], tokenize=False, add_generation_prompt=False, enable_thinking=False)
         if not isinstance(text, str) or not text.strip():
             raise ValueError(f"Chat template produced empty text for {row['id']}")
         rendered.append({"text": text, "id": row["id"]})
@@ -115,6 +115,7 @@ def main() -> None:
         fp16=False,
         bf16=False,
         dataset_text_field="text",
+        assistant_only_loss=True,
         seed=args.seed,
         data_seed=args.seed,
     )

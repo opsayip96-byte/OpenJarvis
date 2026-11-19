@@ -14,6 +14,8 @@ from types import SimpleNamespace
 import openjarvis.engine.ollama as ollama_mod
 from openjarvis.core.types import Message, Role
 from openjarvis.engine._base import messages_to_dicts
+from openjarvis.server.models import ChatMessage as APIChatMessage
+from openjarvis.server.routes import _to_messages
 
 
 def test_message_defaults_to_no_images() -> None:
@@ -92,3 +94,14 @@ def test_guardrails_preserves_images_when_sanitizing() -> None:
     guarded.generate([msg], model="x")
 
     assert engine.received[0].images == ["aGVsbG8="]
+
+
+
+def test_server_chat_request_forwards_images_to_core_message() -> None:
+    encoded = "aGVsbG8="
+    messages = _to_messages([
+        APIChatMessage(role="user", content="Describe this", images=[encoded])
+    ])
+    assert len(messages) == 1
+    assert messages[0].content == "Describe this"
+    assert messages[0].images == [encoded]

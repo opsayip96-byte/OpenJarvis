@@ -41,8 +41,66 @@ import {
 import { isAndroidNative, JarvisNative, type AndroidVoice } from '../lib/android-native';
 import { isAutoUpdateDisabled, setAutoUpdateDisabled } from '../components/Desktop/UpdateChecker';
 import { apiFetch } from '../lib/api';
+import { JarvisLocalModel, type LocalModelStatus } from '../lib/local-model';
 
 const CLOUD_KEY_STATUS_CHANGED = 'openjarvis-cloud-key-status-changed';
+
+function LocalModelManager() {
+  const [status, setStatus] = useState<LocalModelStatus>({ ready: false, sizeBytes: 0, path: '' });
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState('');
+
+  const refresh = useCallback(async () => {
+    try { setStatus(await JarvisLocalModel.getModelStatus()); }
+    catch { setStatus({ ready: false, sizeBytes: 0, path: '' }); }
+  }, []);
+
+  useEffect(() => { void refresh(); }, [refresh]);
+
+  const choose = async () => {
+    setBusy(true);
+    setMessage('');
+    try {
+      const result = await JarvisLocalModel.chooseModel();
+      setStatus(result);
+      setMessage(`Imported ${result.name || 'GGUF model'} and verified its GGUF header. SHA-256: ${result.sha256 || 'available'}`);
+    } catch (error) {
+      const text = error instanceof Error ? error.message : String(error);
+      if (!text.toLowerCase().includes('cancel')) setMessage(text);
+    } finally { setBusy(false); }
+  };
+
+  const remove = async () => {
+    if (!window.confirm('Remove the locally stored model file?')) return;
+    setBusy(true);
+    try { await JarvisLocalModel.removeModel(); await refresh(); setMessage('Local model file removed.'); }
+    catch (error) { setMessage(error instanceof Error ? error.message : String(error)); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <Section title="JARVIS local model">
+      <SettingRow label="Private GGUF model" description="Import a model into app-private storage. It stays on this phone.">
+        <div className="flex items-center gap-2">
+          <span className="text-xs" style={{ color: status.ready ? 'var(--color-success)' : 'var(--color-text-tertiary)' }}>
+            {status.ready ? `Stored · ${(status.sizeBytes / 1e9).toFixed(2)} GB` : 'No local model'}
+          </span>
+          <button type="button" disabled={busy} onClick={() => void choose()}
+            className="px-3 py-1.5 rounded-lg text-xs font-medium disabled:opacity-50"
+            style={{ background: 'var(--color-accent)', color: 'white' }}>
+            {busy ? 'Working…' : status.ready ? 'Replace model' : 'Import GGUF'}
+          </button>
+          {status.ready && <button type="button" disabled={busy} onClick={() => void remove()}
+            className="px-2 py-1.5 rounded-lg text-xs" style={{ color: 'var(--color-error)' }}>Remove</button>}
+        </div>
+      </SettingRow>
+      {message && <p className="mt-2 break-all text-xs" style={{ color: 'var(--color-text-secondary)' }}>{message}</p>}
+      <p className="mt-2 text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
+        This first milestone imports and verifies a model file. Local AI inference is not connected yet, so this does not mean chat works offline.
+      </p>
+    </Section>
+  );
+}
 
 function OllamaModelList() {
   const [models, setModels] = useState<Array<{ name: string; size: number }>>([]);
@@ -856,6 +914,8 @@ export function SettingsPage() {
           </Section>
 
           {/* Models */}
+          {androidApp && <LocalModelManager />}
+
           <Section title="Models">
             <SettingRow label="Local models (Ollama)" description="Models available for local inference">
               <OllamaModelList />

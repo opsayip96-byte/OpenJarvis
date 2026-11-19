@@ -60,6 +60,50 @@ First implementation runtime: llama.cpp Android arm64 native library, integrated
 6. Offline Voice: offline speech-to-text and on-device TTS where available; user-visible microphone permission and push-to-talk first. Wake-word listening is a later opt-in due to battery and background restrictions.
 7. Connectivity Policy: Internet-connected mode is the default and enables web search, live sources, updates and explicitly authorised integrations. Local model inference remains the core JARVIS brain. Offline Mode is an explicit fallback that blocks model/chat HTTP requests and keeps supported local memory and device tools available. Never silently switch to a third-party hosted model.
 
+## Multimodal chat and user-directed learning
+
+The chat composer must include a visible `+` attachment control beside the message field. It opens the Android system document/photo picker and supports multiple selected files. The web/desktop build uses the browser file picker. Attachments appear as removable previews before sending and as durable message attachments after sending.
+
+### Supported input pipeline
+
+- Images: JPEG, PNG, WebP and other explicitly supported formats. Preserve the original privately, create bounded-resolution working copies, and pass image content to a compatible vision-language model. A text-only model must never pretend it saw an image.
+- Video: accept common Android video formats, inspect metadata, extract a configurable set of timestamped frames and optionally audio for transcription. Summarise the clip from sampled evidence, and clearly state that it did not inspect every frame unless it actually did.
+- Documents: extract text and metadata from PDF, TXT, Markdown, DOCX and supported office formats. For scans, use OCR only when an OCR engine is installed and report extraction failures.
+- Other files: retain the attachment with filename, MIME type, size and checksum. Only parse formats with an explicit safe parser. Never execute uploaded files, macros, scripts or archives.
+- Enforce file-size, duration, page-count, decompression and memory limits. Stream large files; do not load entire videos or archives into RAM. Show upload/processing progress and allow cancellation.
+- Attachments and derived thumbnails/text remain app-private by default. Online processing must disclose exactly what leaves the device and request consent. Offline mode uses only installed local vision/OCR/audio models.
+
+### Vision and identity boundaries
+
+JARVIS may describe visible, non-sensitive attributes, count people, detect objects, read visible text, explain scenes and compare objects in user-provided images. It must not identify a person by name or match a face to a real-world identity. Do not infer sensitive traits such as race, religion, health status or sexual orientation from images. Distinguish observation from uncertainty and never invent details outside the image.
+
+### Teach JARVIS through chat
+
+A user may explicitly say "remember this", "learn this", "that's incorrect", "this is how I want you to do it", or select a message/file as a lesson. The learning pipeline must:
+
+1. Classify the lesson as a durable memory, preference, correction, factual note, visual example, task demonstration or candidate training example.
+2. Show what JARVIS proposes to remember, with source attachment/message, scope and retention.
+3. Ask for confirmation before storing durable personal memory or adding private material to a training dataset.
+4. Keep a versioned, searchable local knowledge store separate from model weights. Allow inspect, edit, export and delete.
+5. For visual teaching, store the user-provided label/caption and permitted image embedding or image reference with provenance. Never turn a face into an identity profile.
+6. Deduplicate examples, filter secrets and sensitive data, validate file safety and keep train/validation/test splits separated by source to reduce leakage.
+7. Build candidate fine-tuning batches only from explicitly approved examples. Train on a separate capable machine, evaluate against held-out tests, and compare with the current model before offering an update.
+8. Require explicit approval to activate a new model version. Keep rollback to the previous model and preserve memories independently of model updates.
+
+A chat correction can improve future answers immediately through approved memory/retrieval without pretending the neural-network weights changed. Fine-tuning is a separate, measured model-development operation. No automatic training on every upload, no silent external upload, and no use of private attachments for training without explicit consent.
+
+### Acceptance tests for attachments and learning
+
+- The `+` picker can select, preview, remove and send multiple supported files.
+- Text-only models reject or clearly explain unsupported image/video inputs.
+- Image questions are answered from actual vision-model input, not filenames or guessed captions.
+- Video summaries show sampled timestamps and disclose frame sampling.
+- PDF/document extraction preserves page/source references where available.
+- Large, malformed, unsupported and cancelled files fail safely without crashing chat.
+- A user-approved lesson can be retrieved in a later conversation and survives app restart.
+- Deleting a lesson removes it from retrieval and any not-yet-trained dataset; trained model versions have explicit lineage and rollback/retrain handling.
+- Unapproved files and private memories never enter training data.
+
 ## Security and privacy
 
 - Model files and personal memory stay in app-private storage by default.

@@ -11,6 +11,7 @@ import {
   saveCloudKey,
 } from '../lib/api';
 import { isAndroidNative } from '../lib/android-native';
+import { JarvisLocalModel } from '../lib/local-model';
 
 /** Popular models that users can download from the catalogue. */
 const CATALOGUE_MODELS = [
@@ -142,6 +143,34 @@ export function CommandPalette() {
     void refreshCloudKeyStatus();
   }, [refreshCloudKeyStatus]);
 
+  // Register the private GGUF as a selectable chat model. The importer stores
+  // the file separately from the Ollama/server catalogue, so it must be
+  // surfaced here explicitly on Android.
+  useEffect(() => {
+    if (!isAndroidNative()) return;
+    let cancelled = false;
+    void JarvisLocalModel.getModelStatus().then((status) => {
+      if (cancelled || !status.ready) return;
+      const localModel = {
+        id: 'jarvis-local',
+        object: 'model',
+        created: Math.floor(Date.now() / 1000),
+        owned_by: 'jarvis-local',
+      };
+      const state = useAppStore.getState();
+      state.setModels([
+        ...state.models.filter((model) => model.id !== localModel.id),
+        localModel,
+      ]);
+      if (!state.selectedModel || state.selectedModel === '') {
+        state.setSelectedModel(localModel.id);
+      }
+    }).catch(() => {
+      // No imported private model. Leave the normal model catalogue unchanged.
+    });
+    return () => { cancelled = true; };
+  }, []);
+
   useEffect(() => {
     setSelectedIdx(0);
   }, [query, tab]);
@@ -163,8 +192,14 @@ export function CommandPalette() {
       setModelLoading(true);
       addLogEntry({ timestamp: Date.now(), level: 'info', category: 'model', message: `Switching to ${modelId}...` });
       try {
-        await preloadModel(modelId, owner);
-        addLogEntry({ timestamp: Date.now(), level: 'info', category: 'model', message: `${modelId} loaded` });
+        if (modelId === 'jarvis-local') {
+          const status = await JarvisLocalModel.getModelStatus();
+          if (!status.ready || !status.path) throw new Error('No private GGUF model is imported.');
+          addLogEntry({ timestamp: Date.now(), level: 'info', category: 'model', message: 'Private JARVIS GGUF selected. It will load on the first chat request.' });
+        } else {
+          await preloadModel(modelId, owner);
+          addLogEntry({ timestamp: Date.now(), level: 'info', category: 'model', message: `${modelId} loaded` });
+        }
       } catch (e: any) {
         addLogEntry({ timestamp: Date.now(), level: 'error', category: 'model', message: `Failed to load ${modelId}: ${e.message}` });
       } finally {

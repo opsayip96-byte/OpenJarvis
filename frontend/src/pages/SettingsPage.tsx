@@ -96,7 +96,7 @@ function LocalModelManager() {
       </SettingRow>
       {message && <p className="mt-2 break-all text-xs" style={{ color: 'var(--color-text-secondary)' }}>{message}</p>}
       <p className="mt-2 text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
-        This first milestone imports and verifies a model file. Local AI inference is not connected yet, so this does not mean chat works offline.
+        After import, the Android app loads this model into its on-device llama.cpp text engine when you start a chat. The current runtime is CPU-only and text-only. Vision, video, documents, and model-specific chat-template detection are still being developed.
       </p>
     </Section>
   );

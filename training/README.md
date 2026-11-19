@@ -35,7 +35,7 @@ pip install -r training/requirements.txt
 python training/train_lora.py --train path/to/jarvis-approved-training.jsonl --output training/output/jarvis-lora
 ```
 
-A one-time training machine with suitable GPU memory is required for practical fine-tuning. This script runs locally and does not upload data or call a hosted inference API. After packaging, inference can run locally on the phone. A GGUF file is an inference artifact, not a self-training engine.
+A one-time training machine with suitable GPU memory is required for practical fine-tuning. This script runs locally and does not upload data or call a hosted inference API. By default it reserves 10% of unique reviewed examples for validation, with a fixed seed of 42; adjust `--eval-fraction` and `--seed` for controlled experiments. After packaging, inference can run locally on the phone. A GGUF file is an inference artifact, not a self-training engine.
 
 ## Track 2: foundation model from scratch
 

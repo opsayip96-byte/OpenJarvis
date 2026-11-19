@@ -58,6 +58,7 @@ export async function* streamChat(
       yield { data: JSON.stringify({ choices: [{ delta: {}, finish_reason: 'stop' }], model: 'jarvis-local', engine: 'llama.cpp' }) };
       return;
     }
+    throw new Error('JARVIS Local is selected, but no private GGUF model is imported. Open Settings and import your GGUF model.');
   }
 
   const base = getBase();

@@ -145,6 +145,17 @@ export function MessageBubble({ message, isLive = false }: Props) {
           }}
         >
           {message.content}
+          {message.attachments && message.attachments.length > 0 && (
+            <div className="mt-2 flex flex-col gap-1 border-t pt-2" style={{ borderColor: 'var(--color-border)' }}>
+              {message.attachments.map((file) => (
+                <div key={file.id} className="flex items-center gap-2 text-xs opacity-80">
+                  <span aria-hidden="true">{file.mimeType.startsWith('image/') ? '🖼️' : '📎'}</span>
+                  <span className="truncate">{file.name}</span>
+                  <span className="shrink-0">{(file.sizeBytes / 1024).toFixed(0)} KB</span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     );

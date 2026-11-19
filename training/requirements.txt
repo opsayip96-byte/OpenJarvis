@@ -1,7 +1,7 @@
 # Training environment only. This does not add a runtime API dependency.
 torch>=2.6.0
 transformers>=4.51.0
-trl>=0.24.0
+trl>=0.24.0,<0.25
 peft>=0.18.0
 accelerate>=1.10.0
 datasets>=3.0.0

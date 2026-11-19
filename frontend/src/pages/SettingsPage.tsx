@@ -42,6 +42,7 @@ import { isAndroidNative, JarvisNative, type AndroidVoice } from '../lib/android
 import { isAutoUpdateDisabled, setAutoUpdateDisabled } from '../components/Desktop/UpdateChecker';
 import { apiFetch } from '../lib/api';
 import { JarvisLocalModel, type LocalModelStatus } from '../lib/local-model';
+import { listPendingLessons, removePendingLesson, clearPendingLessons, exportPendingLessonsJsonl, type JarvisLesson } from '../lib/jarvis-learning';
 
 const CLOUD_KEY_STATUS_CHANGED = 'openjarvis-cloud-key-status-changed';
 
@@ -450,6 +451,56 @@ function PersonalMemoryManager() {
       </div>
       {error && <p role="alert" className="text-xs mt-2" style={{ color: 'var(--color-error)' }}>{error}</p>}
     </div>
+  );
+}
+
+
+function JarvisLearningQueue() {
+  const [lessons, setLessons] = useState<JarvisLesson[]>([]);
+  const refresh = useCallback(() => setLessons(listPendingLessons()), []);
+  useEffect(() => { refresh(); }, [refresh]);
+
+  const exportLessons = () => {
+    const content = exportPendingLessonsJsonl();
+    if (!content) return;
+    const url = URL.createObjectURL(new Blob([content], { type: 'application/x-ndjson' }));
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = 'jarvis-approved-training-candidates.jsonl';
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <Section title="JARVIS learning queue">
+      <SettingRow label="Pending teaching examples" description="Prompts and local-model responses saved from Teach JARVIS mode. These are candidates, not trained weights.">
+        <div className="flex items-center gap-2">
+          <span className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>{lessons.length} saved</span>
+          <button type="button" disabled={!lessons.length} onClick={exportLessons}
+            className="px-3 py-1.5 rounded-lg text-xs font-medium disabled:opacity-40"
+            style={{ background: 'var(--color-accent)', color: 'white' }}>Export dataset</button>
+          <button type="button" disabled={!lessons.length} onClick={() => {
+            if (window.confirm('Delete all pending JARVIS teaching examples from this device?')) {
+              clearPendingLessons(); refresh();
+            }
+          }} className="px-2 py-1.5 rounded-lg text-xs disabled:opacity-40"
+            style={{ color: 'var(--color-error)' }}>Clear</button>
+        </div>
+      </SettingRow>
+      {lessons.slice(-5).reverse().map((lesson) => (
+        <div key={lesson.id} className="mt-3 rounded-lg p-3" style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}>
+          <div className="text-xs font-medium mb-1" style={{ color: 'var(--color-text-secondary)' }}>Prompt</div>
+          <p className="text-xs whitespace-pre-wrap break-words">{lesson.prompt}</p>
+          <div className="text-xs font-medium mt-2 mb-1" style={{ color: 'var(--color-text-secondary)' }}>JARVIS response</div>
+          <p className="text-xs whitespace-pre-wrap break-words">{lesson.response}</p>
+          <button type="button" onClick={() => { removePendingLesson(lesson.id); refresh(); }}
+            className="mt-2 text-xs" style={{ color: 'var(--color-error)' }}>Remove example</button>
+        </div>
+      ))}
+      <p className="mt-2 text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
+        Export creates a JSONL candidate dataset. Review and clean it before training. Actual LoRA weight updates still run in the training environment, not automatically on this phone.
+      </p>
+    </Section>
   );
 }
 
@@ -914,7 +965,7 @@ export function SettingsPage() {
           </Section>
 
           {/* Models */}
-          {androidApp && <LocalModelManager />}
+          {androidApp && <LocalModelManager />}\n          {androidApp && <JarvisLearningQueue />}
 
           <Section title="Models">
             <SettingRow label="Local models (Ollama)" description="Models available for local inference">

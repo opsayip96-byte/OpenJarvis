@@ -49,7 +49,7 @@ def load_records(path: Path) -> list[dict]:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--base-model", default="Qwen/Qwen3.5-2B-Base")
+    parser.add_argument("--base-model", default="Qwen/Qwen3-1.7B-Base")
     parser.add_argument("--train", type=Path, default=Path("training/data/jarvis_seed_sft.jsonl"))
     parser.add_argument("--output", type=Path, default=Path("training/output/jarvis-lora"))
     parser.add_argument("--epochs", type=float, default=3.0)

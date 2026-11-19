@@ -24,7 +24,7 @@ function toLocalPrompt(messages: ChatRequest['messages']): string {
   const latestUserMessage = [...messages].reverse().find((message) => message.role === 'user')?.content ?? '';
   const examples = getApprovedLearningExamples(latestUserMessage);
   const learnedExamples = examples.length
-    ? `USER-APPROVED EXAMPLES FROM JARVIS TRAINING MEMORY (use as guidance only; follow the current request when it differs):\\n${examples.map((item, index) => `Example ${index + 1}\\nUSER: ${item.prompt}\\nJARVIS: ${item.answer}`).join('\\n\\n')}\\n\\n`
+    ? `USER-APPROVED EXAMPLES FROM JARVIS TRAINING MEMORY (use as guidance only; follow the current request when it differs):\n${examples.map((item, index) => `Example ${index + 1}\nUSER: ${item.prompt}\nJARVIS: ${item.answer}`).join('\n\n')}\n\n`
     : '';
   return memory + learnedExamples + messages.slice(-16).map((message) => {
     const role = message.role === 'assistant' ? 'JARVIS' : message.role === 'system' ? 'SYSTEM' : 'USER';

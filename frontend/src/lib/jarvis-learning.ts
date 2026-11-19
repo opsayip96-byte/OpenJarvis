@@ -16,7 +16,8 @@ const MAX_TEXT = 12000;
 
 function readLessons(): JarvisLesson[] {
   try {
-    const parsed = JSON.parse(localStorage.getItem(LESSONS_KEY) || '[]');
+    const legacy = JSON.parse(localStorage.getItem('jarvis.learning.pending.v1') || '[]');
+    const parsed = JSON.parse(localStorage.getItem(LESSONS_KEY) || 'null') ?? (Array.isArray(legacy) ? legacy.map((item: any) => ({ ...item, suggestedResponse: item.response, targetResponse: '', status: 'pending' })) : []);
     return Array.isArray(parsed) ? parsed.filter((item) =>
       item && typeof item.id === 'string' && typeof item.prompt === 'string'
       && typeof item.suggestedResponse === 'string'

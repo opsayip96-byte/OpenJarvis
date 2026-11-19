@@ -58,9 +58,28 @@ Java_com_openjarvis_jarvis_JarvisInferencePlugin_nativeGenerate(JNIEnv *env, job
     env->ReleaseStringUTFChars(prompt, input);
     if (text.empty()) return env->NewStringUTF("");
 
-    // Qwen/ChatML-friendly default. Model-specific templates will be selected
-    // from GGUF metadata in the next runtime milestone.
-    std::string formatted = "<|im_start|>user\n" + text + "<|im_end|>\n<|im_start|>assistant\n";
+    // Prefer the GGUF model's own chat template. Fall back to ChatML only
+    // when the model does not declare one.
+    const char *system_text = "You are JARVIS, a capable, calm, precise personal AI assistant. Think carefully, verify claims, explain uncertainty, and never pretend to have performed an action you did not perform.";
+    llama_chat_message messages[2] = {
+        {"system", system_text},
+        {"user", text.c_str()}
+    };
+    std::string formatted;
+    const char *chat_template = llama_model_chat_template(g_model, nullptr);
+    if (chat_template) {
+        std::vector<char> rendered(std::max<size_t>(4096, (text.size() + strlen(system_text)) * 4));
+        int32_t rendered_size = llama_chat_apply_template(chat_template, messages, 2, true,
+                                                          rendered.data(), (int32_t)rendered.size());
+        if (rendered_size > 0 && rendered_size <= (int32_t)rendered.size()) {
+            formatted.assign(rendered.data(), (size_t)rendered_size);
+        }
+    }
+    if (formatted.empty()) {
+        formatted = "<|im_start|>system\\n" + std::string(system_text) +
+                    "<|im_end|>\\n<|im_start|>user\\n" + text +
+                    "<|im_end|>\\n<|im_start|>assistant\\n";
+    }
     std::vector<llama_token> tokens(std::max<int>(256, (int)formatted.size() * 2));
     int32_t count = llama_tokenize(g_vocab, formatted.c_str(), (int32_t)formatted.size(),
                                    tokens.data(), (int32_t)tokens.size(), true, true);

@@ -490,8 +490,15 @@ export const useAppStore = create<AppState>((set, get) => {
 
     // ── Models & server ────────────────────────────────────────────
 
-    setModels: (models: ModelInfo[]) =>
+    setModels: (incomingModels: ModelInfo[]) =>
       set((state) => {
+        // Preserve the Android private GGUF entry when the backend refreshes
+        // its own Ollama/cloud catalogue.
+        const privateModels = state.models.filter((m) => m.owned_by === 'jarvis-local');
+        const models = [
+          ...incomingModels,
+          ...privateModels.filter((local) => !incomingModels.some((m) => m.id === local.id)),
+        ];
         // Ollama returns embed-only models (e.g. nomic-embed-text) in the
         // same list as chat models. Auto-picking models[0] selected the
         // embedder and every chat failed with HTTP 400 "does not support

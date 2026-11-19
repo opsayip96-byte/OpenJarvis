@@ -1,5 +1,6 @@
 import type { ResearchEvent, SSEEvent } from '../types';
-import { getBase, authHeaders, isAndroidNative } from './api';
+import { getBase, authHeaders } from './api';
+import { isAndroidNative } from './android-native';
 import { timeZoneHeaders } from './timezone';
 import { JarvisLocalModel } from './local-model';
 import { JarvisInference } from './jarvis-inference';

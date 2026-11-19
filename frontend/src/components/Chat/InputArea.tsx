@@ -215,7 +215,7 @@ export function InputArea() {
       toast.error('Each image must be 6 MiB or smaller.');
       return;
     }
-    const combined = [...images.reduce((sum, item) => sum + item.file.size, 0), ...selected.map((file) => file.size)].reduce((sum, size) => sum + size, 0);
+    const combined = images.reduce((sum, item) => sum + item.file.size, 0) + selected.reduce((sum, file) => sum + file.size, 0);
     if (combined > 12 * 1024 * 1024) {
       toast.error('The combined image size must be 12 MiB or smaller.');
       return;

@@ -11,17 +11,28 @@ JARVIS must be able to load its language model, hold a conversation, retrieve lo
 
 This is a practical local assistant, not a claim of sentience, consciousness, unlimited intelligence, or fictional omnipotence.
 
+## Model ownership and intelligence strategy
+
+JARVIS is a private personal AI project, not a product or publishing project. The goal is to own and control the complete local assistant stack: model artifact, JARVIS-specific adapter, system/orchestration code, local memory, tool registry and Android integration. It must not need a provider API or remote server at runtime.
+
+There are two distinct meanings of “own AI”:
+
+- Own assistant intelligence: start from an openly licensed pretrained model, then create a JARVIS-specific fine-tune/LoRA adapter, tool-use training data, evaluation suite, memory and orchestration. The resulting local model files and assistant runtime are controlled by this project.
+- New foundation model from scratch: define and pretrain new weights/tokenizer on a large curated corpus, then post-train for instruction following, reasoning and tool use. This requires substantial compute and data and is not feasible to do to frontier quality on an 8 GB phone.
+
+Recommended path: build JARVIS's own assistant intelligence on top of an open-weight base first, then fine-tune a private adapter. If the user later wants fully independent base weights, treat training a small model from scratch as a separate research phase, not a promise of superhuman intelligence.
+
 ## Model decision
 
-Primary candidate: Qwen3.5-4B in a 4-bit GGUF quantization (Q4_K_M where available), downloaded separately after installation.
+First device benchmark candidate: Qwen3.5-2B Q4_K_M GGUF (approximately 1.31 GB in one published quantization). It is the safer first fit for an 8 GB phone and is officially listed as a 2B-parameter model under Apache-2.0. It is still a compact model, not a frontier model. See https://huggingface.co/Qwen/Qwen3.5-2B and https://huggingface.co/SoAIHQ/Qwen3.5-2B-GGUF.
 
-Why: a current compact general-purpose model with reasoning and multilingual capability is a better single-model starting point than a tiny router-only model. The model file is not bundled in the APK, to avoid a multi-gigabyte install and allow model updates independently.
+Higher-capability candidate: Qwen3.5-4B Q4_K_M GGUF (approximately 2.8 GB in one published quantization). Only promote it after measuring peak memory, speed, heat, battery and process stability on the actual iQOO. See https://huggingface.co/Qwen/Qwen3.5-4B and https://huggingface.co/SoAIHQ/Qwen3.5-4B-GGUF.
 
-Important memory constraint: 8 GB is total device RAM, not an 8 GB model budget. Begin with a 2,048-token context, memory-mapped weights where supported, bounded KV cache, one active model, and no concurrent large model. Benchmark cold load, peak resident memory, tokens/second, heat, battery and Android process survival before making 4B the default.
+Do not assume the largest model is best on this phone. Start with a short 2K-4K context, one resident model, bounded KV cache and memory-mapped weights where supported. Model files are downloaded once with explicit consent, then inference works offline. Model files are not bundled in the APK.
 
-Fallback if Qwen3.5-4B exceeds safe memory/thermal limits: Qwen3.5-2B Q4. A small fast routing model may be considered later, but do not ship multiple resident LLMs initially.
+The long-term JARVIS-specific model is a fine-tuned adapter merged or loaded locally with the base model. Build a clean dataset of JARVIS persona, task planning, tool schemas, Android capability boundaries, error recovery, factual calibration and user-approved preference examples. Exclude secrets and private conversations unless the user explicitly selects and sanitizes them. Evaluate against held-out tasks before adopting each adapter. Keep a base-model rollback option.
 
-Model licensing and exact downloadable artifact must be verified at model selection time. Store model ID, source, revision, license, quantization and SHA-256 in a signed/verified model manifest. Never download an arbitrary model URL supplied by a chat prompt.
+Model licensing, exact artifact, tokenizer/chat template compatibility and SHA-256 must be verified before download. Store model ID, source, revision, license, quantization and checksum in a trusted manifest. Never download an arbitrary model URL supplied by a chat prompt.
 
 ## Runtime decision
 
@@ -56,15 +67,22 @@ First implementation runtime: llama.cpp Android arm64 native library, integrated
 
 ### Phase 1: local inference proof
 - Add native llama.cpp runtime and a minimal Kotlin plugin API: getRuntimeStatus, listModels, downloadModel, loadModel, unloadModel, generate, cancelGeneration.
-- Add a model manager screen and Qwen3.5-4B Q4 candidate manifest.
+- Add a model manager and benchmark Qwen3.5-2B Q4 first, then Qwen3.5-4B Q4.
 - Test with network disabled after model download.
-- Add a smaller fallback model option.
+- Record actual memory, latency, tokens/second, temperature and battery results on the iQOO.
 
 ### Phase 2: actual JARVIS orchestration
-- Replace the cloud-only chat path with a Local/Cloud engine interface.
+- Make local inference the default and fully functional path; keep cloud inference absent or an explicitly separate optional mode.
 - Implement local system prompt, streaming, conversation history and explicit memory retrieval.
-- Add a small typed tool loop with allowlisted tools, bounded steps and result verification.
-- Display which engine is active and which tools are truly installed.
+- Add a typed tool loop with allowlisted tools, bounded steps, permission checks and result verification.
+- Display the actual local model, runtime and installed tools; never invent capabilities.
+
+### Phase 2B: create JARVIS-specific model
+- Build a versioned, permission-safe dataset for JARVIS style, structured reasoning, tool calling, memory use, honest uncertainty and Android actions.
+- Establish held-out evaluation tests before training.
+- Fine-tune a LoRA/PEFT adapter on a suitable training machine or supported training environment. This is a one-time model-development step, not an inference API or runtime server.
+- Validate the adapter against the base model, merge or package it for local inference, and ship the resulting weights to the phone.
+- Keep model lineage, license, dataset provenance and rollback artifact.
 
 ### Phase 3: offline voice and Android tools
 - Integrate offline speech recognition and local TTS.

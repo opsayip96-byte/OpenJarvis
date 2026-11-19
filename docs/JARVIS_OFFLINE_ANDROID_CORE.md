@@ -24,7 +24,9 @@ Chosen path C: (1) build and benchmark a local base model, (2) create JARVIS's p
 
 ## Model decision
 
-First device benchmark candidate: Qwen3.5-2B Q4_K_M GGUF (approximately 1.31 GB). The upstream Qwen model card lists Apache-2.0; verify the exact quantized repository's provenance and license before using it. It is the safer first fit for an 8 GB phone, but remains a compact model, not a frontier model. Official model: https://huggingface.co/Qwen/Qwen3.5-2B . Candidate GGUF and checksum: https://huggingface.co/SoAIHQ/Qwen3.5-2B-GGUF.
+First device inference benchmark candidate: Qwen3.5-2B Q4_K_M GGUF (approximately 1.31 GB). The upstream Qwen model card lists Apache-2.0; verify the exact quantized repository's provenance and license before using it. It is the safer first fit for an 8 GB phone, but remains a compact model, not a frontier model. Official chat model: https://huggingface.co/Qwen/Qwen3.5-2B . Candidate GGUF and checksum: https://huggingface.co/SoAIHQ/Qwen3.5-2B-GGUF.
+
+Fine-tuning candidate: Qwen3.5-2B-Base, rather than assuming the already post-trained chat model is the best adapter-training starting point. Its official model card describes it as a pretrained-only checkpoint for fine-tuning and specifically documents LoRA-style PEFT compatibility with the official chat template: https://huggingface.co/Qwen/Qwen3.5-2B-Base . The training and inference checkpoints may be different artifacts; after adapter evaluation, convert/package the merged result for the chosen Android runtime.
 
 Higher-capability candidate: Qwen3.5-4B Q4_K_M GGUF (approximately 2.7-3.03 GB depending on the quantization artifact). Only promote it after measuring peak memory, speed, heat, battery and process stability on the actual iQOO. Official GGUF repository: https://huggingface.co/ggml-org/Qwen3.5-4B-GGUF.
 
@@ -78,6 +80,7 @@ First implementation runtime: llama.cpp Android arm64 native library, integrated
 - Display the actual local model, runtime and installed tools; never invent capabilities.
 
 ### Phase 2B: create JARVIS-specific model
+- Use Qwen3.5-2B-Base as the initial fine-tuning candidate; compare with the post-trained chat model before committing to a base.
 - Build a versioned, permission-safe dataset for JARVIS style, structured reasoning, tool calling, memory use, honest uncertainty and Android actions.
 - Establish held-out evaluation tests before training.
 - Fine-tune a LoRA/PEFT adapter on a suitable training machine or supported training environment. This is a one-time model-development step, not an inference API or runtime server.

@@ -2198,3 +2198,48 @@ class TestConfiguredModelOrdering:
         returned = [m["id"] for m in resp.json()["data"]]
         assert "not-installed" not in returned
         assert returned == self._MODELS
+
+
+class TestExplicitRememberExtraction:
+    def test_extracts_one_fact(self):
+        from openjarvis.server.routes import _explicit_remember_text
+        from openjarvis.server.models import ChatMessage
+
+        messages = [ChatMessage(role="user", content="Remember that I live in Kerala.")]
+        assert _explicit_remember_text(messages) == "I live in Kerala."
+
+    def test_excludes_followup_instruction_but_keeps_consecutive_facts(self):
+        from openjarvis.server.routes import _explicit_remember_text
+        from openjarvis.server.models import ChatMessage
+
+        messages = [
+            ChatMessage(
+                role="user",
+                content=(
+                    "Remember that your name is JARVIS. "
+                    "You are my personal AI assistant. "
+                    "Confirm your identity and explain your tools."
+                ),
+            )
+        ]
+        assert _explicit_remember_text(messages) == (
+            "your name is JARVIS. You are my personal AI assistant."
+        )
+
+    def test_does_not_save_non_remember_messages(self):
+        from openjarvis.server.routes import _explicit_remember_text
+        from openjarvis.server.models import ChatMessage
+
+        messages = [ChatMessage(role="user", content="Tell me about persistent memory.")]
+        assert _explicit_remember_text(messages) is None
+
+    def test_only_considers_latest_user_instruction(self):
+        from openjarvis.server.routes import _explicit_remember_text
+        from openjarvis.server.models import ChatMessage
+
+        messages = [
+            ChatMessage(role="user", content="Remember that I live in Kerala."),
+            ChatMessage(role="assistant", content="Saved."),
+            ChatMessage(role="user", content="What is the weather?"),
+        ]
+        assert _explicit_remember_text(messages) is None

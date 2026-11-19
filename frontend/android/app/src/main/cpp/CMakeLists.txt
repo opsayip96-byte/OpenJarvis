@@ -11,6 +11,7 @@ FetchContent_Declare(
     GIT_REPOSITORY https://github.com/ggml-org/llama.cpp.git
     GIT_TAG 7fce5439fe451cd48340b112ec37d2befe02c776
     GIT_SHALLOW FALSE
+    GIT_SUBMODULES_RECURSE TRUE
 )
 set(GGML_NATIVE OFF CACHE BOOL "" FORCE)
 set(GGML_OPENMP OFF CACHE BOOL "" FORCE)

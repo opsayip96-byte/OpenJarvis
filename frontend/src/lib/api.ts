@@ -130,6 +130,9 @@ export const getBase = (): string => {
   if (settingsUrl) return settingsUrl;
   if (import.meta.env.VITE_API_URL) return import.meta.env.VITE_API_URL;
   if (isTauri()) return _tauriApiBase || DESKTOP_API_FALLBACK;
+  // Android runs the bundled UI inside Capacitor, so relative API requests
+  // would hit the WebView instead of the cloud JARVIS server.
+  if (isAndroidNative()) return 'https://openjarvis-server-qg4j.onrender.com';
   return '';
 };
 

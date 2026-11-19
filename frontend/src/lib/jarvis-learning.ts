@@ -70,6 +70,35 @@ export function savePendingLesson(prompt: string, suggestedResponse: string): Ja
 
 export function listPendingLessons(): JarvisLesson[] { return readLessons(); }
 
+/**
+ * Return a small, deterministic set of user-approved examples for local
+ * retrieval-augmented learning. These examples influence prompts immediately;
+ * they do not modify GGUF weights or treat unapproved suggestions as truth.
+ */
+export function getApprovedLearningExamples(query: string, limit = 4): Array<{ prompt: string; answer: string }> {
+  const terms = new Set((query.toLocaleLowerCase().match(/[\\p{L}\\p{N}]{3,}/gu) ?? []));
+  const approved = readLessons()
+    .filter((lesson) => lesson.status === 'approved' && lesson.targetResponse.trim())
+    .map((lesson) => {
+      const promptTerms = (lesson.prompt.toLocaleLowerCase().match(/[\\p{L}\\p{N}]{3,}/gu) ?? []);
+      const overlap = promptTerms.reduce((score, term) => score + (terms.has(term) ? 1 : 0), 0);
+      return { lesson, score: overlap };
+    });
+  approved.sort((a, b) => b.score - a.score || b.lesson.createdAt - a.lesson.createdAt);
+  const selected = approved.slice(0, Math.max(0, Math.min(6, limit)));
+  const result: Array<{ prompt: string; answer: string }> = [];
+  let budget = 6000;
+  for (const { lesson } of selected) {
+    const prompt = lesson.prompt.slice(0, 1800);
+    const answer = lesson.targetResponse.slice(0, 2400);
+    const cost = prompt.length + answer.length;
+    if (cost > budget) continue;
+    result.push({ prompt, answer });
+    budget -= cost;
+  }
+  return result;
+}
+
 export function approvePendingLesson(id: string, targetResponse: string): void {
   const answer = targetResponse.trim().slice(0, MAX_TEXT);
   if (!answer) throw new Error('Write the correct target answer before approving this example.');

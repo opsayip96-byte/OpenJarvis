@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { Send, Square, Search, Plus, X } from 'lucide-react';
+import { Send, Square, Search, Plus, X, BrainCircuit } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAppStore, generateId } from '../../lib/store';
 import { streamChat, streamResearch } from '../../lib/sse';
@@ -12,6 +12,8 @@ import {
 } from '../../lib/chat-telemetry';
 import { MicButton } from './MicButton';
 import { useSpeech } from '../../hooks/useSpeech';
+import { savePendingLesson } from '../../lib/jarvis-learning';
+import { JarvisLocalModel } from '../../lib/local-model';
 import type {
   ChatMessage,
   MessageTelemetry,
@@ -109,6 +111,7 @@ function useResearchCorpusSync(enabled: boolean): {
 export function InputArea() {
   const [input, setInput] = useState('');
   const [images, setImages] = useState<PendingImage[]>([]);
+  const [teachMode, setTeachMode] = useState(false);
   const imagePickerRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -257,6 +260,18 @@ export function InputArea() {
     if (!selectedModel) {
       toast.error('Pick a model first (⌘K)');
       return;
+    }
+    if (teachMode) {
+      try {
+        const local = await JarvisLocalModel.getModelStatus();
+        if (!local.ready || !local.path) {
+          toast.error('Import a local GGUF model before teaching. Teaching mode never sends lesson prompts to a cloud model.');
+          return;
+        }
+      } catch {
+        toast.error('Could not verify the local JARVIS model. Teaching is paused for privacy.');
+        return;
+      }
     }
 
     setInput('');
@@ -608,6 +623,14 @@ export function InputArea() {
         // Not a digest response or server unavailable — skip
       }
 
+      if (teachMode && content && accumulatedContent && !accumulatedContent.startsWith('Error:')) {
+        try {
+          savePendingLesson(content, accumulatedContent);
+          toast.success('Lesson saved privately for review. Model weights have not changed yet.');
+        } catch {
+          toast.error('Could not save this teaching example on this device.');
+        }
+      }
       updateLastAssistant(
         convId,
         accumulatedContent,
@@ -653,6 +676,7 @@ export function InputArea() {
     temperature,
     maxTokens,
     images,
+    teachMode,
   ]);
 
   sendRecognizedSpeechRef.current = (text) => sendMessage(text);
@@ -670,6 +694,22 @@ export function InputArea() {
         <div className="flex items-center gap-2">
           <button
             type="button"
+            onClick={() => setTeachMode((current) => !current)}
+            disabled={streamState.isStreaming}
+            aria-pressed={teachMode}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs transition-colors cursor-pointer disabled:cursor-default disabled:opacity-50"
+            style={{
+              background: teachMode ? 'var(--color-accent-subtle)' : 'transparent',
+              border: `1px solid ${teachMode ? 'var(--color-accent)' : 'var(--color-border)'}`,
+              color: teachMode ? 'var(--color-accent)' : 'var(--color-text-tertiary)',
+            }}
+            title={teachMode ? 'Teach JARVIS: on' : 'Teach JARVIS: off'}
+          >
+            <BrainCircuit size={12} />
+            Teach JARVIS
+          </button>
+          <button
+            type="button"
             onClick={() => setDeepResearch(!deepResearch)}
             disabled={streamState.isStreaming}
             aria-pressed={deepResearch}
@@ -685,6 +725,11 @@ export function InputArea() {
             Deep Research
           </button>
         </div>
+        {teachMode && (
+          <div className="text-[11px] leading-snug" style={{ color: 'var(--color-text-secondary)' }}>
+            Teaching mode uses your imported local model only. Each prompt and response is saved privately as a pending lesson for review and later training. It does not change model weights immediately.
+          </div>
+        )}
         {deepResearch && corpusSync.syncing && corpusSync.itemsSynced > 0 && (
           <div
             className="text-[11px] leading-snug"
@@ -727,7 +772,7 @@ export function InputArea() {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder={selectedModel ? 'Message OpenJarvis...' : 'Pick a model first (⌘K)...'}
+          placeholder={teachMode ? 'Teach JARVIS a rule or example...' : selectedModel ? 'Message OpenJarvis...' : 'Pick a model first (⌘K)...'}
           rows={1}
           className="flex-1 bg-transparent outline-none resize-none text-sm leading-relaxed"
           style={{ color: 'var(--color-text)', maxHeight: '200px' }}

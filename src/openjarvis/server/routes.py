@@ -474,17 +474,50 @@ def _response_content(response) -> str:
 
 
 def _explicit_remember_text(messages) -> str | None:
-    """Extract only a clear user-issued remember command, never an inference."""
+    """Extract the fact portion of a clear user-issued remember command.
+
+    Only explicit remember commands are persisted here. If the user appends
+    a separate request (for example, "Remember that X. Now explain Y"), stop
+    before that instruction so the memory store contains facts, not task text.
+    """
     import re
+
+    action_starters = re.compile(
+        r"^(?:confirm|explain|list|tell|show|describe|summari[sz]e|"
+        r"answer|calculate|find|search|compare|write|draft|generate|"
+        r"what|why|how|can you|could you|please)\\b",
+        re.IGNORECASE,
+    )
 
     for message in reversed(messages):
         if message.role != "user" or not message.content:
             continue
-        match = re.match(r"^\s*remember\s+(?:this|that)\s*[:,-]?\s+(.+?)\s*$", message.content, re.I | re.S)
-        if match:
-            text = match.group(1).strip()
-            return text if text else None
-        break
+        match = re.match(
+            r"^\\s*remember\\s+(?:this|that)\\s*[:,-]?\\s+(.+?)\\s*$",
+            message.content,
+            re.IGNORECASE | re.DOTALL,
+        )
+        if not match:
+            break
+
+        text = match.group(1).strip()
+        if not text:
+            return None
+
+        # Keep consecutive declarative sentences, but drop a trailing task
+        # request. This retains compound facts while avoiding saving the
+        # instruction that followed the fact as if it were personal memory.
+        sentences = re.split(r"(?<=[.!?])\\s+", text)
+        fact_sentences: list[str] = []
+        for sentence in sentences:
+            candidate = sentence.strip()
+            if not candidate:
+                continue
+            if fact_sentences and action_starters.match(candidate):
+                break
+            fact_sentences.append(candidate)
+        fact_text = " ".join(fact_sentences).strip()
+        return fact_text or None
     return None
 
 

@@ -39,7 +39,7 @@ export async function* streamChat(
   // Use the private GGUF only when the user explicitly selected JARVIS Local.
   // Prompts and conversation history remain on-device. Image payloads are not
   // silently forwarded to a cloud provider when local vision is unavailable.
-  if (isAndroidNative()) {
+  if (isAndroidNative() && request.model === 'jarvis-local') {
     const model = await JarvisLocalModel.getModelStatus();
     if (model.ready && model.path) {
       if (request.messages.some((message) => (message.images?.length ?? 0) > 0)) {

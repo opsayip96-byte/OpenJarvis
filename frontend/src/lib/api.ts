@@ -130,6 +130,10 @@ export const getBase = (): string => {
   if (settingsUrl) return settingsUrl;
   if (import.meta.env.VITE_API_URL) return import.meta.env.VITE_API_URL;
   if (isTauri()) return _tauriApiBase || DESKTOP_API_FALLBACK;
+  // The Android APK is a standalone Capacitor app. Relative API paths resolve
+  // inside its WebView and cannot reach the cloud backend. Use the known HTTPS
+  // JARVIS endpoint unless the user explicitly overrides it in Settings.
+  if (isAndroidNative()) return 'https://openjarvis-server-qg4j.onrender.com';
   return '';
 };
 

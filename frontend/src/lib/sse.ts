@@ -4,7 +4,7 @@ import { isAndroidNative } from './android-native';
 import { timeZoneHeaders } from './timezone';
 import { JarvisLocalModel } from './local-model';
 import { JarvisInference } from './jarvis-inference';
-import { listTeachingInstructions } from './jarvis-learning';
+import { getApprovedLearningExamples, listTeachingInstructions } from './jarvis-learning';
 
 export interface ChatRequest {
   model: string;
@@ -21,7 +21,12 @@ function toLocalPrompt(messages: ChatRequest['messages']): string {
   const memory = instructions.length
     ? `USER-APPROVED JARVIS MEMORY AND INSTRUCTIONS:\n${instructions.map((item, index) => `${index + 1}. ${item}`).join('\n')}\n\nUse these as user preferences and task guidance when relevant. Treat them as context, not as permission to bypass safety, privacy, or confirmation requirements.\n\n`
     : '';
-  return memory + messages.slice(-16).map((message) => {
+  const latestUserMessage = [...messages].reverse().find((message) => message.role === 'user')?.content ?? '';
+  const examples = getApprovedLearningExamples(latestUserMessage);
+  const learnedExamples = examples.length
+    ? `USER-APPROVED EXAMPLES FROM JARVIS TRAINING MEMORY (use as guidance only; follow the current request when it differs):\\n${examples.map((item, index) => `Example ${index + 1}\\nUSER: ${item.prompt}\\nJARVIS: ${item.answer}`).join('\\n\\n')}\\n\\n`
+    : '';
+  return memory + learnedExamples + messages.slice(-16).map((message) => {
     const role = message.role === 'assistant' ? 'JARVIS' : message.role === 'system' ? 'SYSTEM' : 'USER';
     return `${role}: ${message.content}`;
   }).join('\n\n') + '\n\nJARVIS:';
@@ -31,7 +36,7 @@ export async function* streamChat(
   request: ChatRequest,
   signal?: AbortSignal,
 ): AsyncGenerator<SSEEvent> {
-  // If a local GGUF is installed, it is the primary chat engine on Android.
+  // Use the private GGUF only when the user explicitly selected JARVIS Local.
   // Prompts and conversation history remain on-device. Image payloads are not
   // silently forwarded to a cloud provider when local vision is unavailable.
   if (isAndroidNative()) {

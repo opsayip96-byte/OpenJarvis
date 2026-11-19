@@ -614,3 +614,13 @@ def test_mining_config_pool_parsed_as_pool_target(tmp_path):
     cfg = load_config(target)
     assert isinstance(cfg.mining.submit_target, PoolTarget)
     assert cfg.mining.submit_target.url == "https://pool.openjarvis.ai/submit"
+
+
+class TestJarvisAssistantIdentity:
+    def test_default_agent_prompt_defines_jarvis_operating_contract(self) -> None:
+        prompt = AgentConfig().default_system_prompt
+        assert "You are JARVIS" in prompt
+        assert "select the best available tools" in prompt
+        assert "inspect their results" in prompt
+        assert "Ask before purchases, payments" in prompt
+        assert "must not claim feelings, sentience" in prompt

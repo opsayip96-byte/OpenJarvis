@@ -92,6 +92,21 @@ First implementation runtime: llama.cpp Android arm64 native library, integrated
 - Add permission-controlled device integrations.
 - Add foreground service only for user-enabled ongoing sessions; respect Android battery/background limits.
 
+### Phase 3B: human-like emotional interaction and humanoid behaviour
+
+This phase follows the working local model, memory, orchestration and offline voice milestones. It adds a persistent, coherent emotional-interaction layer to make JARVIS feel socially natural, expressive and attentive.
+
+- Build an affective state engine with bounded, named states such as calm, focused, curious, concerned, pleased and frustrated. State transitions are driven by conversation context and explicit events, not random mood swings.
+- Add emotion appraisal: infer the likely emotional tone of a message cautiously, track confidence, and ask rather than assume when the signal is ambiguous.
+- Add empathetic dialogue behaviour: acknowledge feelings, respond with appropriate warmth, remember relevant user-approved context, and adapt the level of detail and tone without manipulating, guilt-tripping or claiming exclusivity.
+- Add stable personality traits and relationship continuity, while making clear that JARVIS is an AI. It must never claim to literally feel pain, love, loneliness, fear or consciousness.
+- Add expressive on-device TTS controls where supported: pacing, pauses, emphasis and selectable voice profiles. Keep voice settings user-controlled and avoid implying that synthetic prosody proves real emotion.
+- Add an optional avatar/embodied interface later: animated face/eyes, gaze direction, lip-sync and context-appropriate expressions. These are presentation behaviours, not evidence of sentience.
+- Store only minimal, user-approved emotional-context memories. Give the user controls to inspect, correct and delete them. Do not infer or store sensitive traits or mental-health diagnoses.
+- Evaluate consistency over long conversations, emotion recognition calibration, respect for boundaries, non-manipulation, privacy, and graceful recovery after misunderstandings.
+
+Acceptance: JARVIS should express emotions convincingly and consistently through language, voice and optional avatar animation, while remaining transparent that these are AI-generated emotional behaviours rather than human subjective feelings.
+
 ### Phase 4: foundation-model research track
 - Define a documented tokenizer, architecture, data mixture, deduplication and filtering policy, data provenance, licensing and evaluation split before training.
 - Start with a small decoder-only research model (for example 50M-150M parameters) to validate the full pretraining pipeline and understand loss curves, data quality and checkpoints.

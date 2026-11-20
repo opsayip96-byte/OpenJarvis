@@ -1009,7 +1009,8 @@ export function SettingsPage() {
 
           {/* Models */}
           {androidApp && <LocalModelManager />}
-          {androidApp && <QwenModelLibrary />}\n          {androidApp && <JarvisLearningQueue />}
+          {androidApp && <QwenModelLibrary />}
+          {androidApp && <JarvisLearningQueue />}
 
           <Section title="Models">
             <SettingRow label="Local models (Ollama)" description="Models available for local inference">

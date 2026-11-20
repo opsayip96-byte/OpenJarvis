@@ -47,7 +47,8 @@ function parseQuantization(fileName: string): string | null {
 }
 
 function validSha256(value?: string): string | null {
-  return value && /^[a-f0-9]{64}$/i.test(value) ? value.toLowerCase() : null;
+  const normalized = value?.replace(/^sha256:/i, '');
+  return normalized && /^[a-f0-9]{64}$/i.test(normalized) ? normalized.toLowerCase() : null;
 }
 
 export function parseQwenGgufFiles(

@@ -244,6 +244,8 @@ public class JarvisModelLibraryPlugin extends Plugin {
                 partial.delete(); return "failed";
             }
         }
+        long expectedSize = record.optLong("expectedSizeBytes", 0L);
+        if (expectedSize > 0 && partial.length() != expectedSize) { partial.delete(); return "failed"; }
         String actual = sha256(partial);
         String expected = record.optString("expectedSha256", "");
         if (!expected.isEmpty() && !expected.equalsIgnoreCase(actual)) {

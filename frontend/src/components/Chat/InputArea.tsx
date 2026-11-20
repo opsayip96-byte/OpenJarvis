@@ -370,7 +370,10 @@ export function InputArea() {
       // Never silently fall back to a remote model if local inference fails.
       // Deep Research and image attachments remain on their explicitly separate
       // online-capable paths because the current native runtime is text-only.
-      if (isAndroidNative() && !deepResearch && outgoingImages.length === 0) {
+      if (isAndroidNative() && !deepResearch) {
+        if (outgoingImages.length > 0) {
+          throw new Error('The current on-device JARVIS model is text-only. Remove image attachments before sending, so private images are not uploaded to a remote service.');
+        }
         const localModel = await getActiveLocalModel();
         if (localModel.ready && localModel.path) {
           setStreamState({ phase: 'Loading local JARVIS model...' });
@@ -392,14 +395,14 @@ export function InputArea() {
             approvedExamples.length
               ? `USER-APPROVED EXAMPLES:\\n${approvedExamples.map((item) => `User: ${item.prompt}\\nJARVIS: ${item.answer}`).join('\\n\\n')}`
               : '',
-          ].filter(Boolean).join('\\n\\n');
+          ].filter(Boolean).join('\\n\\n').slice(0, 1200);
           const prompt = [
             JARVIS_SYSTEM_PROMPT,
             learningContext,
             'CONVERSATION:',
-            history,
+            history.slice(-4200),
             'JARVIS:',
-          ].filter(Boolean).join('\\n\\n').slice(-6500);
+          ].filter(Boolean).join('\\n\\n');
           const localResult = await JarvisInference.generate({
             prompt,
             maxTokens: Math.max(64, Math.min(512, maxTokens)),

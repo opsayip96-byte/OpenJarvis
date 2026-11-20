@@ -13,7 +13,9 @@ import {
 import { MicButton } from './MicButton';
 import { useSpeech } from '../../hooks/useSpeech';
 import { savePendingLesson, saveTeachingInstruction } from '../../lib/jarvis-learning';
-import { JarvisLocalModel } from '../../lib/local-model';
+import { isAndroidNative } from '../../lib/android-native';
+import { JarvisInference } from '../../lib/jarvis-inference';
+import { getActiveLocalModel, JarvisLocalModel } from '../../lib/local-model';
 import type {
   ChatMessage,
   MessageTelemetry,
@@ -364,7 +366,66 @@ export function InputArea() {
     });
 
     try {
-      if (deepResearch) {
+      // On Android, use the active GGUF model as JARVIS's primary brain.
+      // Never silently fall back to a remote model if local inference fails.
+      // Deep Research and image attachments remain on their explicitly separate
+      // online-capable paths because the current native runtime is text-only.
+      if (isAndroidNative() && !deepResearch && outgoingImages.length === 0) {
+        const localModel = await getActiveLocalModel();
+        if (localModel.ready && localModel.path) {
+          setStreamState({ phase: 'Loading local JARVIS model...' });
+          const runtime = await JarvisInference.getStatus();
+          if (!runtime.loaded || runtime.modelPath !== localModel.path) {
+            await JarvisInference.loadModel({ path: localModel.path });
+          }
+          setStreamState({ phase: 'Thinking locally...' });
+          const history = apiMessages.slice(1).slice(-8).map((message) => {
+            const role = message.role === 'assistant' ? 'JARVIS' : 'USER';
+            return `${role}: ${message.content}`;
+          }).join('\\n\\n');
+          const prompt = [
+            'Continue this conversation. Follow the JARVIS operating rules in your system instructions.',
+            history,
+            'JARVIS:',
+          ].filter(Boolean).join('\\n\\n').slice(-6500);
+          const localResult = await JarvisInference.generate({
+            prompt,
+            maxTokens: Math.max(64, Math.min(512, maxTokens)),
+          });
+          accumulatedContent = localResult.text.trim();
+          routedEngine = localResult.engine || 'llama.cpp';
+          if (!accumulatedContent) {
+            throw new Error('The local model returned an empty response. Try a shorter message or another GGUF model.');
+          }
+          setStreamState({ content: accumulatedContent, phase: 'Local response ready' });
+          updateLastAssistant(convId, accumulatedContent);
+        } else {
+          // Preserve the existing configured backend path until a local model
+          // has been imported. Once one is active, normal Android chat stays local.
+          for await (const sseEvent of streamChat(
+            {
+              model: selectedModel,
+              conversation_id: convId,
+              messages: apiMessages,
+              stream: true,
+              temperature,
+              max_tokens: maxTokens,
+              memory_context: isMemoryContextEnabled(),
+            },
+            controller.signal,
+          )) {
+            const eventName = sseEvent.event;
+            if (eventName === 'inference_start') setStreamState({ phase: 'Generating...' });
+            else if (eventName === 'message' || eventName === 'content') {
+              const delta = typeof sseEvent.data === 'string' ? sseEvent.data : '';
+              accumulatedContent += delta;
+              setStreamState({ content: accumulatedContent, phase: '' });
+              updateLastAssistant(convId, accumulatedContent);
+            } else if (eventName === 'done') break;
+            else if (eventName === 'error') throw new Error(String(sseEvent.data || 'Chat request failed.'));
+          }
+        }
+      } else if (deepResearch) {
         for await (const ev of streamResearch(
           content,
           selectedModel,

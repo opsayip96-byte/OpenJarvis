@@ -102,3 +102,19 @@ class TestChatMessage:
     def test_with_tool_call_id(self):
         msg = ChatMessage(role="tool", content="result", tool_call_id="abc")
         assert msg.tool_call_id == "abc"
+
+    def test_accepts_valid_base64_image(self):
+        msg = ChatMessage(role="user", content="Describe this", images=["aGVsbG8="])
+        assert msg.images == ["aGVsbG8="]
+
+    def test_rejects_invalid_base64_image(self):
+        with pytest.raises(pydantic.ValidationError):
+            ChatMessage(role="user", content="Describe this", images=["not base64!"])
+
+    def test_rejects_more_than_four_images(self):
+        with pytest.raises(pydantic.ValidationError):
+            ChatMessage(role="user", content="Describe this", images=["YQ=="] * 5)
+
+    def test_rejects_oversized_image_payload(self):
+        with pytest.raises(pydantic.ValidationError):
+            ChatMessage(role="user", content="Describe this", images=["A" * (8 * 1024 * 1024 + 1)])

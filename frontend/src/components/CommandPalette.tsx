@@ -11,6 +11,7 @@ import {
   saveCloudKey,
 } from '../lib/api';
 import { isAndroidNative } from '../lib/android-native';
+import { getActiveLocalModel } from '../lib/local-model';
 
 /** Popular models that users can download from the catalogue. */
 const CATALOGUE_MODELS = [
@@ -142,6 +143,40 @@ export function CommandPalette() {
     void refreshCloudKeyStatus();
   }, [refreshCloudKeyStatus]);
 
+  // Keep the generic JARVIS Local selector in sync with the active entry
+  // in the native multi-model library, including models downloaded after mount.
+  useEffect(() => {
+    if (!isAndroidNative()) return;
+    let cancelled = false;
+    const syncLocalModel = () => {
+      void getActiveLocalModel().then((status) => {
+        if (cancelled) return;
+        const state = useAppStore.getState();
+        const withoutLocal = state.models.filter((model) => model.owned_by !== 'jarvis-local');
+        if (status.ready && status.path) {
+          const localModel = {
+            id: 'jarvis-local',
+            object: 'model',
+            created: Math.floor(Date.now() / 1000),
+            owned_by: 'jarvis-local',
+          };
+          state.setModels([...withoutLocal, localModel]);
+          if (!state.selectedModel) state.setSelectedModel(localModel.id);
+        } else {
+          state.setModels(withoutLocal);
+        }
+      }).catch(() => {
+        // Keep the regular model catalogue available if the native library is unavailable.
+      });
+    };
+    syncLocalModel();
+    window.addEventListener('jarvis-model-library-updated', syncLocalModel);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('jarvis-model-library-updated', syncLocalModel);
+    };
+  }, []);
+
   useEffect(() => {
     setSelectedIdx(0);
   }, [query, tab]);
@@ -163,8 +198,14 @@ export function CommandPalette() {
       setModelLoading(true);
       addLogEntry({ timestamp: Date.now(), level: 'info', category: 'model', message: `Switching to ${modelId}...` });
       try {
-        await preloadModel(modelId, owner);
-        addLogEntry({ timestamp: Date.now(), level: 'info', category: 'model', message: `${modelId} loaded` });
+        if (modelId === 'jarvis-local') {
+          const status = await getActiveLocalModel();
+          if (!status.ready || !status.path) throw new Error('No private GGUF model is imported.');
+          addLogEntry({ timestamp: Date.now(), level: 'info', category: 'model', message: 'Private JARVIS GGUF selected. It will load on the first chat request.' });
+        } else {
+          await preloadModel(modelId, owner);
+          addLogEntry({ timestamp: Date.now(), level: 'info', category: 'model', message: `${modelId} loaded` });
+        }
       } catch (e: any) {
         addLogEntry({ timestamp: Date.now(), level: 'error', category: 'model', message: `Failed to load ${modelId}: ${e.message}` });
       } finally {

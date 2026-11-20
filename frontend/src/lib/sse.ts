@@ -1,21 +1,66 @@
 import type { ResearchEvent, SSEEvent } from '../types';
 import { getBase, authHeaders } from './api';
+import { isAndroidNative } from './android-native';
 import { timeZoneHeaders } from './timezone';
+import { getActiveLocalModel } from './local-model';
+import { JarvisInference } from './jarvis-inference';
+import { getApprovedLearningExamples, listTeachingInstructions } from './jarvis-learning';
 
 export interface ChatRequest {
   model: string;
   conversation_id?: string;
-  messages: Array<{ role: string; content: string }>;
+  messages: Array<{ role: string; content: string; images?: string[] }>;
   stream: true;
   temperature?: number;
   max_tokens?: number;
   memory_context?: boolean;
 }
 
+function toLocalPrompt(messages: ChatRequest['messages']): string {
+  const instructions = listTeachingInstructions();
+  const memory = instructions.length
+    ? `USER-APPROVED JARVIS MEMORY AND INSTRUCTIONS:\n${instructions.map((item, index) => `${index + 1}. ${item}`).join('\n')}\n\nUse these as user preferences and task guidance when relevant. Treat them as context, not as permission to bypass safety, privacy, or confirmation requirements.\n\n`
+    : '';
+  const latestUserMessage = [...messages].reverse().find((message) => message.role === 'user')?.content ?? '';
+  const examples = getApprovedLearningExamples(latestUserMessage);
+  const learnedExamples = examples.length
+    ? `USER-APPROVED EXAMPLES FROM JARVIS TRAINING MEMORY (use as guidance only; follow the current request when it differs):\n${examples.map((item, index) => `Example ${index + 1}\nUSER: ${item.prompt}\nJARVIS: ${item.answer}`).join('\n\n')}\n\n`
+    : '';
+  return memory + learnedExamples + messages.slice(-16).map((message) => {
+    const role = message.role === 'assistant' ? 'JARVIS' : message.role === 'system' ? 'SYSTEM' : 'USER';
+    return `${role}: ${message.content}`;
+  }).join('\n\n') + '\n\nJARVIS:';
+}
+
 export async function* streamChat(
   request: ChatRequest,
   signal?: AbortSignal,
 ): AsyncGenerator<SSEEvent> {
+  // Use the private GGUF only when the user explicitly selected JARVIS Local.
+  // Prompts and conversation history remain on-device. Image payloads are not
+  // silently forwarded to a cloud provider when local vision is unavailable.
+  if (isAndroidNative() && request.model === 'jarvis-local') {
+    const model = await getActiveLocalModel();
+    if (model.ready && model.path) {
+      if (request.messages.some((message) => (message.images?.length ?? 0) > 0)) {
+        throw new Error('This local model runtime currently supports text only. Remove the image or use a verified vision model after vision support is enabled.');
+      }
+      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+      const status = await JarvisInference.getStatus();
+      if (!status.loaded || status.modelPath !== model.path) await JarvisInference.loadModel({ path: model.path });
+      yield { event: 'inference_start', data: JSON.stringify({ model: 'JARVIS Local', engine: 'llama.cpp', turn: 1 }) };
+      const result = await JarvisInference.generate({
+        prompt: toLocalPrompt(request.messages),
+        maxTokens: Math.min(request.max_tokens ?? 256, 512),
+      });
+      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+      yield { data: JSON.stringify({ choices: [{ delta: { content: result.text }, finish_reason: null }], model: 'jarvis-local', engine: 'llama.cpp' }) };
+      yield { data: JSON.stringify({ choices: [{ delta: {}, finish_reason: 'stop' }], model: 'jarvis-local', engine: 'llama.cpp' }) };
+      return;
+    }
+    throw new Error('JARVIS Local is selected, but no private GGUF model is imported. Open Settings and import your GGUF model.');
+  }
+
   const base = getBase();
   const response = await fetch(`${base}/v1/chat/completions`, {
     method: 'POST',
@@ -36,24 +81,18 @@ export async function* streamChat(
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split('\n');
       buffer = lines.pop() || '';
-
       let currentEvent: string | undefined;
-
       for (const line of lines) {
-        if (line.startsWith('event: ')) {
-          currentEvent = line.slice(7).trim();
-        } else if (line.startsWith('data: ')) {
+        if (line.startsWith('event: ')) currentEvent = line.slice(7).trim();
+        else if (line.startsWith('data: ')) {
           const data = line.slice(6);
           if (data === '[DONE]') return;
           yield { event: currentEvent, data };
           currentEvent = undefined;
-        } else if (line.trim() === '') {
-          currentEvent = undefined;
-        }
+        } else if (line.trim() === '') currentEvent = undefined;
       }
     }
   } finally {
@@ -66,8 +105,6 @@ export async function* streamResearch(
   model?: string,
   signal?: AbortSignal,
 ): AsyncGenerator<ResearchEvent> {
-  // /api/research is mounted at the server root — strip any trailing /v1
-  // from the base so configurations like "http://host:8000/v1" still resolve.
   const base = getBase().replace(/\/v1\/?$/, '');
   const response = await fetch(`${base}/api/research`, {
     method: 'POST',
@@ -75,24 +112,17 @@ export async function* streamResearch(
     body: JSON.stringify({ query, ...(model ? { model } : {}) }),
     signal,
   });
-
-  if (!response.ok) {
-    throw new Error(`Research request failed: ${response.status}`);
-  }
-
+  if (!response.ok) throw new Error(`Research request failed: ${response.status}`);
   const reader = response.body!.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
-
   try {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split('\n');
       buffer = lines.pop() || '';
-
       for (const line of lines) {
         if (!line.startsWith('data: ')) continue;
         const data = line.slice(6);
@@ -101,9 +131,7 @@ export async function* streamResearch(
           const parsed = JSON.parse(data) as ResearchEvent;
           yield parsed;
           if (parsed.type === 'done') return;
-        } catch {
-          // skip malformed chunks
-        }
+        } catch { /* Ignore malformed event chunks. */ }
       }
     }
   } finally {

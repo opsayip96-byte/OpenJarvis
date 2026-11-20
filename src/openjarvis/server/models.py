@@ -6,7 +6,7 @@ import time
 import uuid
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 # ---------------------------------------------------------------------------
 # Request models
@@ -19,6 +19,31 @@ class ChatMessage(BaseModel):
     name: Optional[str] = None
     tool_calls: Optional[List[Dict[str, Any]]] = None
     tool_call_id: Optional[str] = None
+    # Base64-encoded image payloads for vision-capable local engines.
+    images: Optional[List[str]] = Field(default=None, max_length=4)
+
+    @field_validator("images")
+    @classmethod
+    def validate_images(cls, images: Optional[List[str]]) -> Optional[List[str]]:
+        if images is None:
+            return None
+        import base64
+        import binascii
+
+        total_bytes = 0
+        for image in images:
+            if not image or len(image) > 8 * 1024 * 1024:
+                raise ValueError("Each image must be non-empty and no larger than 6 MiB.")
+            try:
+                decoded = base64.b64decode(image, validate=True)
+            except (binascii.Error, ValueError) as exc:
+                raise ValueError("Images must be raw base64-encoded image bytes.") from exc
+            if len(decoded) > 6 * 1024 * 1024:
+                raise ValueError("Each image must be no larger than 6 MiB.")
+            total_bytes += len(decoded)
+        if total_bytes > 12 * 1024 * 1024:
+            raise ValueError("Combined image payload must not exceed 12 MiB.")
+        return images
 
 
 class ChatCompletionRequest(BaseModel):

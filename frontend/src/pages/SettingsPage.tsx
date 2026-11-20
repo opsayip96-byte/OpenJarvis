@@ -41,8 +41,69 @@ import {
 import { isAndroidNative, JarvisNative, type AndroidVoice } from '../lib/android-native';
 import { isAutoUpdateDisabled, setAutoUpdateDisabled } from '../components/Desktop/UpdateChecker';
 import { apiFetch } from '../lib/api';
+import { JarvisLocalModel, type LocalModelStatus } from '../lib/local-model';
+import { QwenModelLibrary } from '../components/QwenModelLibrary';
+import { listPendingLessons, removePendingLesson, clearPendingLessons, exportPendingLessonsJsonl, approvePendingLesson, listTeachingInstructions, removeTeachingInstruction, type JarvisLesson } from '../lib/jarvis-learning';
 
 const CLOUD_KEY_STATUS_CHANGED = 'openjarvis-cloud-key-status-changed';
+
+function LocalModelManager() {
+  const [status, setStatus] = useState<LocalModelStatus>({ ready: false, sizeBytes: 0, path: '' });
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState('');
+
+  const refresh = useCallback(async () => {
+    try { setStatus(await JarvisLocalModel.getModelStatus()); }
+    catch { setStatus({ ready: false, sizeBytes: 0, path: '' }); }
+  }, []);
+
+  useEffect(() => { void refresh(); }, [refresh]);
+
+  const choose = async () => {
+    setBusy(true);
+    setMessage('');
+    try {
+      const result = await JarvisLocalModel.chooseModel();
+      setStatus(result);
+      window.dispatchEvent(new Event('jarvis-model-library-updated'));
+      setMessage(`Imported ${result.name || 'GGUF model'} and verified its GGUF header. SHA-256: ${result.sha256 || 'available'}`);
+    } catch (error) {
+      const text = error instanceof Error ? error.message : String(error);
+      if (!text.toLowerCase().includes('cancel')) setMessage(text);
+    } finally { setBusy(false); }
+  };
+
+  const remove = async () => {
+    if (!window.confirm('Remove the locally stored model file?')) return;
+    setBusy(true);
+    try { await JarvisLocalModel.removeModel(); await refresh(); window.dispatchEvent(new Event('jarvis-model-library-updated')); setMessage('Local model file removed.'); }
+    catch (error) { setMessage(error instanceof Error ? error.message : String(error)); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <Section title="JARVIS local model">
+      <SettingRow label="Private GGUF model" description="Import a model into app-private storage. It stays on this phone.">
+        <div className="flex items-center gap-2">
+          <span className="text-xs" style={{ color: status.ready ? 'var(--color-success)' : 'var(--color-text-tertiary)' }}>
+            {status.ready ? `Stored · ${(status.sizeBytes / 1e9).toFixed(2)} GB` : 'No local model'}
+          </span>
+          <button type="button" disabled={busy} onClick={() => void choose()}
+            className="px-3 py-1.5 rounded-lg text-xs font-medium disabled:opacity-50"
+            style={{ background: 'var(--color-accent)', color: 'white' }}>
+            {busy ? 'Working…' : status.ready ? 'Replace model' : 'Import GGUF'}
+          </button>
+          {status.ready && <button type="button" disabled={busy} onClick={() => void remove()}
+            className="px-2 py-1.5 rounded-lg text-xs" style={{ color: 'var(--color-error)' }}>Remove</button>}
+        </div>
+      </SettingRow>
+      {message && <p className="mt-2 break-all text-xs" style={{ color: 'var(--color-text-secondary)' }}>{message}</p>}
+      <p className="mt-2 text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
+        After import, the Android app loads this model into its on-device llama.cpp text engine when you start a chat. The current runtime is CPU-only and text-only. Vision, video, documents, and model-specific chat-template detection are still being developed.
+      </p>
+    </Section>
+  );
+}
 
 function OllamaModelList() {
   const [models, setModels] = useState<Array<{ name: string; size: number }>>([]);
@@ -392,6 +453,98 @@ function PersonalMemoryManager() {
       </div>
       {error && <p role="alert" className="text-xs mt-2" style={{ color: 'var(--color-error)' }}>{error}</p>}
     </div>
+  );
+}
+
+
+function JarvisLearningQueue() {
+  const [lessons, setLessons] = useState<JarvisLesson[]>([]);
+  const [instructions, setInstructions] = useState<string[]>([]);
+  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [error, setError] = useState('');
+  const refresh = useCallback(() => {
+    const rows = listPendingLessons();
+    setLessons(rows);
+    setInstructions(listTeachingInstructions());
+    setAnswers((current) => {
+      const next = { ...current };
+      for (const lesson of rows) if (!(lesson.id in next)) next[lesson.id] = lesson.targetResponse || lesson.suggestedResponse;
+      return next;
+    });
+  }, []);
+  useEffect(() => { refresh(); }, [refresh]);
+
+  const approvedCount = lessons.filter((lesson) => lesson.status === 'approved' && lesson.targetResponse.trim()).length;
+  const exportLessons = () => {
+    const content = exportPendingLessonsJsonl();
+    if (!content) { setError('Approve at least one corrected example before exporting.'); return; }
+    const url = URL.createObjectURL(new Blob([content], { type: 'application/x-ndjson' }));
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = 'jarvis-approved-training.jsonl';
+    anchor.click();
+    URL.revokeObjectURL(url);
+    setError('');
+  };
+
+  return (
+    <Section title="JARVIS learning lab">
+      <SettingRow label="Immediate memory learning" description="Instructions you teach are saved privately on this device and added to local JARVIS context in future chats.">
+        <span className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>{instructions.length} instructions</span>
+      </SettingRow>
+      {instructions.slice().reverse().map((instruction) => {
+        const originalIndex = instructions.indexOf(instruction);
+        return (
+          <div key={originalIndex} className="flex items-start gap-2 py-2">
+            <p className="flex-1 min-w-0 text-xs whitespace-pre-wrap break-words" style={{ color: 'var(--color-text-secondary)' }}>{instruction}</p>
+            <button type="button" onClick={() => { removeTeachingInstruction(originalIndex); refresh(); }} className="text-xs" style={{ color: 'var(--color-error)' }}>Forget</button>
+          </div>
+        );
+      })}
+      <SettingRow label="Supervised training examples" description="JARVIS responses are suggestions only. Edit the target answer to the correct response, then approve it. Only approved examples enter the export.">
+        <div className="flex items-center gap-2">
+          <span className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>{approvedCount}/{lessons.length} approved</span>
+          <button type="button" disabled={!approvedCount} onClick={exportLessons}
+            className="px-3 py-1.5 rounded-lg text-xs font-medium disabled:opacity-40"
+            style={{ background: 'var(--color-accent)', color: 'white' }}>Export approved</button>
+          <button type="button" disabled={!lessons.length} onClick={() => {
+            if (window.confirm('Delete all pending and approved JARVIS training examples from this device?')) {
+              clearPendingLessons(); refresh();
+            }
+          }} className="px-2 py-1.5 rounded-lg text-xs disabled:opacity-40"
+            style={{ color: 'var(--color-error)' }}>Clear</button>
+        </div>
+      </SettingRow>
+      {lessons.slice().reverse().map((lesson) => (
+        <div key={lesson.id} className="mt-3 rounded-lg p-3" style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}>
+          <div className="text-xs font-medium mb-1" style={{ color: 'var(--color-text-secondary)' }}>Teaching prompt</div>
+          <p className="text-xs whitespace-pre-wrap break-words">{lesson.prompt}</p>
+          <div className="text-xs font-medium mt-2 mb-1" style={{ color: 'var(--color-text-secondary)' }}>JARVIS suggestion, not trusted training data</div>
+          <p className="text-xs whitespace-pre-wrap break-words">{lesson.suggestedResponse}</p>
+          <label className="block text-xs font-medium mt-3 mb-1" style={{ color: 'var(--color-text-secondary)' }}>Correct target answer</label>
+          <textarea value={answers[lesson.id] ?? ''} onChange={(event) => setAnswers((current) => ({ ...current, [lesson.id]: event.target.value }))}
+            rows={4} className="w-full px-2 py-2 rounded text-xs resize-y"
+            style={{ background: 'var(--color-bg)', color: 'var(--color-text)', border: '1px solid var(--color-border)' }}
+            placeholder="Write or correct the answer JARVIS should learn..." />
+          <div className="flex items-center justify-between gap-2 mt-2">
+            <span className="text-xs" style={{ color: lesson.status === 'approved' ? 'var(--color-success)' : 'var(--color-text-tertiary)' }}>
+              {lesson.status === 'approved' ? 'Approved for dataset' : 'Awaiting your approval'}
+            </span>
+            <div className="flex items-center gap-3">
+              <button type="button" onClick={() => {
+                try { approvePendingLesson(lesson.id, answers[lesson.id] || ''); refresh(); setError(''); }
+                catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+              }} className="text-xs font-medium" style={{ color: 'var(--color-accent)' }}>Approve answer</button>
+              <button type="button" onClick={() => { removePendingLesson(lesson.id); refresh(); }} className="text-xs" style={{ color: 'var(--color-error)' }}>Remove</button>
+            </div>
+          </div>
+        </div>
+      ))}
+      {error && <p role="alert" className="mt-2 text-xs" style={{ color: 'var(--color-error)' }}>{error}</p>}
+      <p className="mt-2 text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
+        Memory learning takes effect on the next local chat. Weight training is a separate LoRA process on suitable training hardware. Exported data stays on this device until you choose to export it. Never teach JARVIS passwords or sensitive personal data.
+      </p>
+    </Section>
   );
 }
 
@@ -856,6 +1009,10 @@ export function SettingsPage() {
           </Section>
 
           {/* Models */}
+          {androidApp && <LocalModelManager />}
+          {androidApp && <QwenModelLibrary />}
+          {androidApp && <JarvisLearningQueue />}
+
           <Section title="Models">
             <SettingRow label="Local models (Ollama)" description="Models available for local inference">
               <OllamaModelList />

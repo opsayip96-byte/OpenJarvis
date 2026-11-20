@@ -1,6 +1,6 @@
 import { registerPlugin } from '@capacitor/core';
 
-export interface JarvisInferenceStatus { loaded: boolean; engine: string; }
+export interface JarvisInferenceStatus { loaded: boolean; engine: string; modelPath?: string; }
 export interface JarvisInferenceResult { loaded: boolean; engine: string; device?: string; }
 export interface JarvisGenerationResult { text: string; engine: string; local: boolean; }
 

@@ -18,6 +18,8 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.security.MessageDigest;
 import java.util.Locale;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 @CapacitorPlugin(name = "JarvisModelLibrary")
 public class JarvisModelLibraryPlugin extends Plugin {
@@ -25,6 +27,7 @@ public class JarvisModelLibraryPlugin extends Plugin {
     private static final String MODELS = "models";
     private static final String ACTIVE = "active_model";
     private DownloadManager downloads;
+    private static final ExecutorService IO = Executors.newSingleThreadExecutor();
 
     @Override
     public void load() {

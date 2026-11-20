@@ -400,30 +400,7 @@ export function InputArea() {
           setStreamState({ content: accumulatedContent, phase: 'Local response ready' });
           updateLastAssistant(convId, accumulatedContent);
         } else {
-          // Preserve the existing configured backend path until a local model
-          // has been imported. Once one is active, normal Android chat stays local.
-          for await (const sseEvent of streamChat(
-            {
-              model: selectedModel,
-              conversation_id: convId,
-              messages: apiMessages,
-              stream: true,
-              temperature,
-              max_tokens: maxTokens,
-              memory_context: isMemoryContextEnabled(),
-            },
-            controller.signal,
-          )) {
-            const eventName = sseEvent.event;
-            if (eventName === 'inference_start') setStreamState({ phase: 'Generating...' });
-            else if (eventName === 'message' || eventName === 'content') {
-              const delta = typeof sseEvent.data === 'string' ? sseEvent.data : '';
-              accumulatedContent += delta;
-              setStreamState({ content: accumulatedContent, phase: '' });
-              updateLastAssistant(convId, accumulatedContent);
-            } else if (eventName === 'done') break;
-            else if (eventName === 'error') throw new Error(String(sseEvent.data || 'Chat request failed.'));
-          }
+          throw new Error('No local GGUF model is active. Import or activate a model in Settings > Qwen model library to use JARVIS on this phone.');
         }
       } else if (deepResearch) {
         for await (const ev of streamResearch(

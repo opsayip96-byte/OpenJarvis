@@ -32,6 +32,7 @@ interface JarvisLocalModelPlugin {
 }
 
 interface JarvisModelLibraryPlugin {
+  getDeviceStorageInfo(): Promise<{ availableStorageBytes: number; totalStorageBytes: number; physicalRamBytes: number; architecture: string }>;
   listModels(): Promise<{ models: LibraryModel[]; activeModelId?: string }>;
   getActiveModel(): Promise<LocalModelStatus>;
   startDownload(options: {
@@ -49,6 +50,8 @@ interface JarvisModelLibraryPlugin {
 
 export const JarvisLocalModel = registerPlugin<JarvisLocalModelPlugin>('JarvisLocalModel');
 export const JarvisModelLibrary = registerPlugin<JarvisModelLibraryPlugin>('JarvisModelLibrary');
+
+export type DeviceCapacity = Awaited<ReturnType<JarvisModelLibraryPlugin['getDeviceStorageInfo']>>;
 
 export async function getActiveLocalModel(): Promise<LocalModelStatus> {
   try {

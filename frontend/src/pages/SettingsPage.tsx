@@ -65,6 +65,7 @@ function LocalModelManager() {
     try {
       const result = await JarvisLocalModel.chooseModel();
       setStatus(result);
+      window.dispatchEvent(new Event('jarvis-model-library-updated'));
       setMessage(`Imported ${result.name || 'GGUF model'} and verified its GGUF header. SHA-256: ${result.sha256 || 'available'}`);
     } catch (error) {
       const text = error instanceof Error ? error.message : String(error);
@@ -75,7 +76,7 @@ function LocalModelManager() {
   const remove = async () => {
     if (!window.confirm('Remove the locally stored model file?')) return;
     setBusy(true);
-    try { await JarvisLocalModel.removeModel(); await refresh(); setMessage('Local model file removed.'); }
+    try { await JarvisLocalModel.removeModel(); await refresh(); window.dispatchEvent(new Event('jarvis-model-library-updated')); setMessage('Local model file removed.'); }
     catch (error) { setMessage(error instanceof Error ? error.message : String(error)); }
     finally { setBusy(false); }
   };

@@ -199,7 +199,7 @@ export function CommandPalette() {
       addLogEntry({ timestamp: Date.now(), level: 'info', category: 'model', message: `Switching to ${modelId}...` });
       try {
         if (modelId === 'jarvis-local') {
-          const status = await JarvisLocalModel.getModelStatus();
+          const status = await getActiveLocalModel();
           if (!status.ready || !status.path) throw new Error('No private GGUF model is imported.');
           addLogEntry({ timestamp: Date.now(), level: 'info', category: 'model', message: 'Private JARVIS GGUF selected. It will load on the first chat request.' });
         } else {

@@ -11,7 +11,7 @@ import {
   saveCloudKey,
 } from '../lib/api';
 import { isAndroidNative } from '../lib/android-native';
-import { JarvisLocalModel } from '../lib/local-model';
+import { getActiveLocalModel } from '../lib/local-model';
 
 /** Popular models that users can download from the catalogue. */
 const CATALOGUE_MODELS = [
@@ -149,7 +149,7 @@ export function CommandPalette() {
   useEffect(() => {
     if (!isAndroidNative()) return;
     let cancelled = false;
-    void JarvisLocalModel.getModelStatus().then((status) => {
+    void getActiveLocalModel().then((status) => {
       if (cancelled || !status.ready) return;
       const localModel = {
         id: 'jarvis-local',

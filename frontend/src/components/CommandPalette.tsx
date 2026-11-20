@@ -143,32 +143,38 @@ export function CommandPalette() {
     void refreshCloudKeyStatus();
   }, [refreshCloudKeyStatus]);
 
-  // Register the private GGUF as a selectable chat model. The importer stores
-  // the file separately from the Ollama/server catalogue, so it must be
-  // surfaced here explicitly on Android.
+  // Keep the generic JARVIS Local selector in sync with the active entry
+  // in the native multi-model library, including models downloaded after mount.
   useEffect(() => {
     if (!isAndroidNative()) return;
     let cancelled = false;
-    void getActiveLocalModel().then((status) => {
-      if (cancelled || !status.ready) return;
-      const localModel = {
-        id: 'jarvis-local',
-        object: 'model',
-        created: Math.floor(Date.now() / 1000),
-        owned_by: 'jarvis-local',
-      };
-      const state = useAppStore.getState();
-      state.setModels([
-        ...state.models.filter((model) => model.id !== localModel.id),
-        localModel,
-      ]);
-      if (!state.selectedModel || state.selectedModel === '') {
-        state.setSelectedModel(localModel.id);
-      }
-    }).catch(() => {
-      // No imported private model. Leave the normal model catalogue unchanged.
-    });
-    return () => { cancelled = true; };
+    const syncLocalModel = () => {
+      void getActiveLocalModel().then((status) => {
+        if (cancelled) return;
+        const state = useAppStore.getState();
+        const withoutLocal = state.models.filter((model) => model.owned_by !== 'jarvis-local');
+        if (status.ready && status.path) {
+          const localModel = {
+            id: 'jarvis-local',
+            object: 'model',
+            created: Math.floor(Date.now() / 1000),
+            owned_by: 'jarvis-local',
+          };
+          state.setModels([...withoutLocal, localModel]);
+          if (!state.selectedModel) state.setSelectedModel(localModel.id);
+        } else {
+          state.setModels(withoutLocal);
+        }
+      }).catch(() => {
+        // Keep the regular model catalogue available if the native library is unavailable.
+      });
+    };
+    syncLocalModel();
+    window.addEventListener('jarvis-model-library-updated', syncLocalModel);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('jarvis-model-library-updated', syncLocalModel);
+    };
   }, []);
 
   useEffect(() => {

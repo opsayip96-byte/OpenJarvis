@@ -12,7 +12,7 @@ import {
 } from '../../lib/chat-telemetry';
 import { MicButton } from './MicButton';
 import { useSpeech } from '../../hooks/useSpeech';
-import { savePendingLesson, saveTeachingInstruction } from '../../lib/jarvis-learning';
+import { getApprovedLearningExamples, listTeachingInstructions, savePendingLesson, saveTeachingInstruction } from '../../lib/jarvis-learning';
 import { isAndroidNative } from '../../lib/android-native';
 import { JarvisInference } from '../../lib/jarvis-inference';
 import { getActiveLocalModel, JarvisLocalModel } from '../../lib/local-model';
@@ -383,8 +383,20 @@ export function InputArea() {
             const role = message.role === 'assistant' ? 'JARVIS' : 'USER';
             return `${role}: ${message.content}`;
           }).join('\\n\\n');
+          const taughtInstructions = listTeachingInstructions().slice(-20);
+          const approvedExamples = getApprovedLearningExamples(content, 3);
+          const learningContext = [
+            taughtInstructions.length
+              ? `USER-APPROVED PERSONAL INSTRUCTIONS:\\n${taughtInstructions.map((item) => `- ${item}`).join('\\n')}`
+              : '',
+            approvedExamples.length
+              ? `USER-APPROVED EXAMPLES:\\n${approvedExamples.map((item) => `User: ${item.prompt}\\nJARVIS: ${item.answer}`).join('\\n\\n')}`
+              : '',
+          ].filter(Boolean).join('\\n\\n');
           const prompt = [
-            'Continue this conversation. Follow the JARVIS operating rules in your system instructions.',
+            JARVIS_SYSTEM_PROMPT,
+            learningContext,
+            'CONVERSATION:',
             history,
             'JARVIS:',
           ].filter(Boolean).join('\\n\\n').slice(-6500);

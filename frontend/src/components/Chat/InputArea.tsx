@@ -259,7 +259,7 @@ export function InputArea() {
       toast.error('Turn off Deep Research to send images.');
       return;
     }
-    if (!selectedModel) {
+    if (!selectedModel && (!isAndroidNative() || deepResearch)) {
       toast.error('Pick a model first (⌘K)');
       return;
     }
@@ -289,7 +289,7 @@ export function InputArea() {
 
     let convId = activeId;
     if (!convId) {
-      convId = createConversation(selectedModel);
+      convId = createConversation(selectedModel || (isAndroidNative() ? 'jarvis-local' : ''));
     }
 
     const userMsg: ChatMessage = {
@@ -362,7 +362,7 @@ export function InputArea() {
       category: 'chat',
       message: deepResearch
         ? `Research: "${content.slice(0, 80)}${content.length > 80 ? '...' : ''}"`
-        : `Request: "${content.slice(0, 80)}${content.length > 80 ? '...' : ''}" → ${selectedModel}`,
+        : `Request: "${content.slice(0, 80)}${content.length > 80 ? '...' : ''}" → ${selectedModel || 'local JARVIS'}`,
     });
 
     try {

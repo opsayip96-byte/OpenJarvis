@@ -204,7 +204,7 @@ public class JarvisModelLibraryPlugin extends Plugin {
         }
     }
 
-    private String finalizeDownload(JSONObject record) throws Exception {
+    private String finalizeDownload(JSONObject record) throws Exception {\n        if (findModel(record.optString("id")) != null) return "complete";
         String name = record.optString("fileName");
         File dir = modelDirectory();
         File partial = new File(dir, name + ".download");

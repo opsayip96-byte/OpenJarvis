@@ -47,7 +47,7 @@ export async function* streamChat(
       }
       if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
       const status = await JarvisInference.getStatus();
-      if (!status.loaded) await JarvisInference.loadModel({ path: model.path });
+      if (!status.loaded || status.modelPath !== model.path) await JarvisInference.loadModel({ path: model.path });
       yield { event: 'inference_start', data: JSON.stringify({ model: 'JARVIS Local', engine: 'llama.cpp', turn: 1 }) };
       const result = await JarvisInference.generate({
         prompt: toLocalPrompt(request.messages),

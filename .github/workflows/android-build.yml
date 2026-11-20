@@ -55,6 +55,10 @@ jobs:
         working-directory: frontend
         run: npm ci
 
+      - name: Run frontend unit tests
+        working-directory: frontend
+        run: npm test
+
       - name: Build frontend and sync native Android project
         working-directory: frontend
         run: |

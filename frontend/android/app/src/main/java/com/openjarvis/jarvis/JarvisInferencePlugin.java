@@ -14,6 +14,7 @@ import java.util.concurrent.Executors;
 public class JarvisInferencePlugin extends Plugin {
     private static final ExecutorService EXECUTOR = Executors.newSingleThreadExecutor();
     private static volatile boolean loaded = false;
+    private static volatile String loadedPath = null;
 
     static {
         System.loadLibrary("jarvis_inference");
@@ -39,6 +40,7 @@ public class JarvisInferencePlugin extends Plugin {
             try {
                 boolean ok = nativeLoad(file.getAbsolutePath());
                 loaded = ok;
+                loadedPath = ok ? file.getAbsolutePath() : null;
                 if (!ok) { call.reject("JARVIS could not load this GGUF model.", "MODEL_LOAD_FAILED"); return; }
                 JSObject result = new JSObject();
                 result.put("loaded", true);
@@ -75,13 +77,13 @@ public class JarvisInferencePlugin extends Plugin {
     @PluginMethod
     public void unloadModel(PluginCall call) {
         EXECUTOR.execute(() -> {
-            try { nativeUnload(); loaded = false; call.resolve(new JSObject().put("loaded", false)); }
+            try { nativeUnload(); loaded = false; loadedPath = null; call.resolve(new JSObject().put("loaded", false)); }
             catch (Throwable error) { call.reject("Could not unload local model.", "MODEL_UNLOAD_FAILED"); }
         });
     }
 
     @PluginMethod
     public void getStatus(PluginCall call) {
-        call.resolve(new JSObject().put("loaded", loaded).put("engine", "llama.cpp"));
+        call.resolve(new JSObject().put("loaded", loaded).put("engine", "llama.cpp").put("modelPath", loadedPath == null ? "" : loadedPath));
     }
 }

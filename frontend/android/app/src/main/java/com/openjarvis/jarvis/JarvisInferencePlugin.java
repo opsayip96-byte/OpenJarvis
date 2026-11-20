@@ -49,6 +49,7 @@ public class JarvisInferencePlugin extends Plugin {
                 call.resolve(result);
             } catch (Throwable error) {
                 loaded = false;
+                loadedPath = null;
                 call.reject("Local inference failed: " + error.getMessage(), "INFERENCE_INIT_FAILED");
             }
         });

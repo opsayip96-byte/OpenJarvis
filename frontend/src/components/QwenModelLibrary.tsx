@@ -59,6 +59,33 @@ export function QwenModelLibrary() {
   useEffect(() => {
     void JarvisModelLibrary.getDeviceStorageInfo().then(setCapacity).catch(() => setCapacity(null));
     void refreshLibrary();
+    void JarvisModelLibrary.listDownloads().then(({ downloads: rows }) => {
+      setDownloads(rows
+        .filter((row) => !['complete', 'missing'].includes(row.status))
+        .map((row) => ({
+          downloadId: row.downloadId,
+          model: {
+            id: row.id,
+            repoId: row.id.split('@')[0] || 'Hugging Face',
+            fileName: row.fileName,
+            quantization: null,
+            sizeBytes: row.expectedSizeBytes || null,
+            sha256: null,
+            revision: 'main',
+            downloadUrl: '',
+            license: null,
+          },
+          status: {
+            downloadId: row.downloadId,
+            status: row.status,
+            bytesDownloaded: row.bytesDownloaded,
+            totalBytes: row.totalBytes,
+            progress: row.progress,
+          },
+        })));
+    }).catch((error) => {
+      setMessage(error instanceof Error ? error.message : String(error));
+    });
   }, [refreshLibrary]);
 
   const search = async () => {

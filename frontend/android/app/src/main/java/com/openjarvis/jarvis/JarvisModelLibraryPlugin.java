@@ -33,6 +33,26 @@ public class JarvisModelLibraryPlugin extends Plugin {
     }
 
     @PluginMethod
+    public void getDeviceStorageInfo(PluginCall call) {
+        try {
+            File dir = modelDirectory();
+            StatFs stats = new StatFs(dir.getAbsolutePath());
+            android.app.ActivityManager activity = (android.app.ActivityManager)getContext().getSystemService(Context.ACTIVITY_SERVICE);
+            android.app.ActivityManager.MemoryInfo memory = new android.app.ActivityManager.MemoryInfo();
+            activity.getMemoryInfo(memory);
+            String abi = android.os.Build.SUPPORTED_ABIS.length > 0 ? android.os.Build.SUPPORTED_ABIS[0] : "unknown";
+            JSObject result = new JSObject();
+            result.put("availableStorageBytes", stats.getAvailableBytes());
+            result.put("totalStorageBytes", stats.getTotalBytes());
+            result.put("physicalRamBytes", memory.totalMem);
+            result.put("architecture", abi);
+            call.resolve(result);
+        } catch (Exception error) {
+            call.reject("Could not read device capacity.", "DEVICE_CAPACITY_FAILED", error);
+        }
+    }
+
+    @PluginMethod
     public void listModels(PluginCall call) {
         try {
             JSONArray stored = readModels();

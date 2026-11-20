@@ -126,7 +126,7 @@ public class JarvisModelLibraryPlugin extends Plugin {
                     call.reject("Not enough free storage. Need about " + required + " bytes including reserve.", "INSUFFICIENT_STORAGE"); return;
                 }
             }
-            String safeName = safeFileName(fileName);
+            String safeName = safeModelFileName(id, fileName);
             File dir = modelDirectory();
             File partial = new File(dir, safeName + ".download");
             if (partial.exists()) partial.delete();
@@ -309,6 +309,13 @@ public class JarvisModelLibraryPlugin extends Plugin {
     }
     private JSONArray getDownloads() throws Exception {return new JSONArray(getContext().getSharedPreferences(PREFS,Context.MODE_PRIVATE).getString("downloads","[]"));}
     private JSONObject findDownload(long id) throws Exception {JSONArray all=getDownloads();for(int i=0;i<all.length();i++){JSONObject item=all.optJSONObject(i);if(item!=null&&item.optLong("downloadId")==id)return item;}return null;}
+    private String safeModelFileName(String id, String name) throws Exception {
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        byte[] hash = digest.digest(id.getBytes("UTF-8"));
+        StringBuilder prefix = new StringBuilder();
+        for (int i = 0; i < 6; i++) prefix.append(String.format(Locale.ROOT, "%02x", hash[i]));
+        return prefix + "-" + safeFileName(name);
+    }
     private String safeFileName(String name){String cleaned=name.replaceAll("[^a-zA-Z0-9._-]","_");return cleaned.length()>100?cleaned.substring(cleaned.length()-100):cleaned;}
     private String sha256(File file) throws Exception {
         MessageDigest digest=MessageDigest.getInstance("SHA-256");

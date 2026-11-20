@@ -111,7 +111,7 @@ public class JarvisModelLibraryPlugin extends Plugin {
             request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
             request.setAllowedOverMetered(true);
             request.setAllowedOverRoaming(false);
-            request.setDestinationInExternalFilesDir(getContext(), "models", safeName + ".download");
+            request.setDestinationInExternalFilesDir(getContext(), Environment.DIRECTORY_DOWNLOADS + "/models", safeName + ".download");
             long downloadId = downloads.enqueue(request);
             JSONObject record = new JSONObject();
             record.put("id", id);

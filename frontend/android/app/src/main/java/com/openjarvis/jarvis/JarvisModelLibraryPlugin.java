@@ -279,7 +279,7 @@ public class JarvisModelLibraryPlugin extends Plugin {
         next.put(value);getContext().getSharedPreferences(PREFS,Context.MODE_PRIVATE).edit().putString("downloads",next.toString()).apply();
     }
     private JSONArray getDownloads() throws Exception {return new JSONArray(getContext().getSharedPreferences(PREFS,Context.MODE_PRIVATE).getString("downloads","[]"));}
-    private JSONObject findDownload(long id){JSONArray all=getDownloads();for(int i=0;i<all.length();i++){JSONObject item=all.optJSONObject(i);if(item!=null&&item.optLong("downloadId")==id)return item;}return null;}
+    private JSONObject findDownload(long id) throws Exception {JSONArray all=getDownloads();for(int i=0;i<all.length();i++){JSONObject item=all.optJSONObject(i);if(item!=null&&item.optLong("downloadId")==id)return item;}return null;}
     private String safeFileName(String name){String cleaned=name.replaceAll("[^a-zA-Z0-9._-]","_");return cleaned.length()>100?cleaned.substring(cleaned.length()-100):cleaned;}
     private String sha256(File file) throws Exception {
         MessageDigest digest=MessageDigest.getInstance("SHA-256");

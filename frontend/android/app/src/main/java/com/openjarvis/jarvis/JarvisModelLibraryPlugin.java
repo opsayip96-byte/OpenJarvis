@@ -157,35 +157,37 @@ public class JarvisModelLibraryPlugin extends Plugin {
     public void getDownloadStatus(PluginCall call) {
         long id = call.getLong("downloadId", -1L);
         if (id < 0) { call.reject("Download ID is required.", "DOWNLOAD_ID_MISSING"); return; }
-        try {
-            JSONObject record = findDownload(id);
-            if (record == null) { call.reject("Download was not found.", "DOWNLOAD_NOT_FOUND"); return; }
-            DownloadManager.Query query = new DownloadManager.Query().setFilterById(id);
-            try (Cursor cursor = downloads.query(query)) {
-                if (cursor == null || !cursor.moveToFirst()) {
-                    call.resolve(new JSObject().put("status", "missing").put("downloadId", id)); return;
+        IO.execute(() -> {
+            try {
+                JSONObject record = findDownload(id);
+                if (record == null) { call.reject("Download was not found.", "DOWNLOAD_NOT_FOUND"); return; }
+                DownloadManager.Query query = new DownloadManager.Query().setFilterById(id);
+                try (Cursor cursor = downloads.query(query)) {
+                    if (cursor == null || !cursor.moveToFirst()) {
+                        call.resolve(new JSObject().put("status", "missing").put("downloadId", id)); return;
+                    }
+                    int status = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS));
+                    long total = cursor.getLong(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES));
+                    long downloaded = cursor.getLong(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR));
+                    String state = "queued";
+                    if (status == DownloadManager.STATUS_RUNNING) state = "downloading";
+                    else if (status == DownloadManager.STATUS_PAUSED) state = "paused";
+                    else if (status == DownloadManager.STATUS_FAILED) state = "failed";
+                    else if (status == DownloadManager.STATUS_SUCCESSFUL) state = finalizeDownload(record);
+                    else if (status == DownloadManager.STATUS_PENDING) state = "queued";
+                    JSObject result = new JSObject();
+                    result.put("downloadId", id);
+                    result.put("status", state);
+                    result.put("bytesDownloaded", downloaded);
+                    result.put("totalBytes", total);
+                    result.put("progress", total > 0 ? Math.min(100, (int)(downloaded * 100 / total)) : 0);
+                    if ("failed".equals(state)) result.put("reason", "Transfer failed or GGUF/checksum verification failed.");
+                    call.resolve(result);
                 }
-                int status = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS));
-                long total = cursor.getLong(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES));
-                long downloaded = cursor.getLong(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR));
-                String state = "queued";
-                if (status == DownloadManager.STATUS_RUNNING) state = "downloading";
-                else if (status == DownloadManager.STATUS_PAUSED) state = "paused";
-                else if (status == DownloadManager.STATUS_FAILED) state = "failed";
-                else if (status == DownloadManager.STATUS_SUCCESSFUL) state = finalizeDownload(record);
-                else if (status == DownloadManager.STATUS_PENDING) state = "queued";
-                JSObject result = new JSObject();
-                result.put("downloadId", id);
-                result.put("status", state);
-                result.put("bytesDownloaded", downloaded);
-                result.put("totalBytes", total);
-                result.put("progress", total > 0 ? Math.min(100, (int)(downloaded * 100 / total)) : 0);
-                if ("failed".equals(state)) result.put("reason", "Android DownloadManager reported a failed transfer.");
-                call.resolve(result);
+            } catch (Exception error) {
+                call.reject("Could not read download status: " + error.getMessage(), "DOWNLOAD_STATUS_FAILED", error);
             }
-        } catch (Exception error) {
-            call.reject("Could not read download status: " + error.getMessage(), "DOWNLOAD_STATUS_FAILED", error);
-        }
+        });
     }
 
     @PluginMethod

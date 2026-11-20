@@ -259,7 +259,7 @@ public class JarvisModelLibraryPlugin extends Plugin {
         return dir;
     }
     private String activeId() { return getContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(ACTIVE, null); }
-    private JSONArray readModels() { return new JSONArray(getContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(MODELS, "[]")); }
+    private JSONArray readModels() throws Exception { return new JSONArray(getContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(MODELS, "[]")); }
     private void saveModels(JSONArray items) { getContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(MODELS, items.toString()).apply(); }
     private JSONObject findModel(String id) throws Exception {
         if (id == null) return null;
@@ -272,13 +272,13 @@ public class JarvisModelLibraryPlugin extends Plugin {
         for(int i=0;i<old.length();i++){JSONObject item=old.optJSONObject(i);if(item!=null&&!id.equals(item.optString("id")))next.put(item);}
         next.put(value);saveModels(next);
     }
-    private void removeModelRecord(String id) { JSONArray old=readModels(),next=new JSONArray();for(int i=0;i<old.length();i++){JSONObject item=old.optJSONObject(i);if(item!=null&&!id.equals(item.optString("id")))next.put(item);}saveModels(next); }
+    private void removeModelRecord(String id) throws Exception { JSONArray old=readModels(),next=new JSONArray();for(int i=0;i<old.length();i++){JSONObject item=old.optJSONObject(i);if(item!=null&&!id.equals(item.optString("id")))next.put(item);}saveModels(next); }
     private void upsertDownload(JSONObject value) throws Exception {
         JSONArray old=getDownloads(),next=new JSONArray();long id=value.optLong("downloadId");
         for(int i=0;i<old.length();i++){JSONObject item=old.optJSONObject(i);if(item!=null&&id!=item.optLong("downloadId"))next.put(item);}
         next.put(value);getContext().getSharedPreferences(PREFS,Context.MODE_PRIVATE).edit().putString("downloads",next.toString()).apply();
     }
-    private JSONArray getDownloads(){return new JSONArray(getContext().getSharedPreferences(PREFS,Context.MODE_PRIVATE).getString("downloads","[]"));}
+    private JSONArray getDownloads() throws Exception {return new JSONArray(getContext().getSharedPreferences(PREFS,Context.MODE_PRIVATE).getString("downloads","[]"));}
     private JSONObject findDownload(long id){JSONArray all=getDownloads();for(int i=0;i<all.length();i++){JSONObject item=all.optJSONObject(i);if(item!=null&&item.optLong("downloadId")==id)return item;}return null;}
     private String safeFileName(String name){String cleaned=name.replaceAll("[^a-zA-Z0-9._-]","_");return cleaned.length()>100?cleaned.substring(cleaned.length()-100):cleaned;}
     private String sha256(File file) throws Exception {

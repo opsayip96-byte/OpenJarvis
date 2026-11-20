@@ -154,6 +154,44 @@ public class JarvisModelLibraryPlugin extends Plugin {
     }
 
     @PluginMethod
+    public void listDownloads(PluginCall call) {
+        IO.execute(() -> {
+            try {
+                JSONArray saved = getDownloads();
+                JSArray rows = new JSArray();
+                for (int i = 0; i < saved.length(); i++) {
+                    JSONObject record = saved.optJSONObject(i);
+                    if (record == null) continue;
+                    long id = record.optLong("downloadId", -1L);
+                    if (id < 0) continue;
+                    DownloadManager.Query query = new DownloadManager.Query().setFilterById(id);
+                    try (Cursor cursor = downloads.query(query)) {
+                        if (cursor == null || !cursor.moveToFirst()) continue;
+                        int raw = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS));
+                        long total = cursor.getLong(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES));
+                        long current = cursor.getLong(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR));
+                        String state = "queued";
+                        if (raw == DownloadManager.STATUS_RUNNING) state = "downloading";
+                        else if (raw == DownloadManager.STATUS_PAUSED) state = "paused";
+                        else if (raw == DownloadManager.STATUS_FAILED) state = "failed";
+                        else if (raw == DownloadManager.STATUS_PENDING) state = "queued";
+                        else if (raw == DownloadManager.STATUS_SUCCESSFUL) state = finalizeDownload(record);
+                        JSObject row = new JSObject(record.toString());
+                        row.put("status", state);
+                        row.put("bytesDownloaded", current);
+                        row.put("totalBytes", total);
+                        row.put("progress", total > 0 ? Math.min(100, (int)(current * 100 / total)) : 0);
+                        rows.put(row);
+                    }
+                }
+                call.resolve(new JSObject().put("downloads", rows));
+            } catch (Exception error) {
+                call.reject("Could not restore download state.", "DOWNLOAD_RESTORE_FAILED", error);
+            }
+        });
+    }
+
+    @PluginMethod
     public void getDownloadStatus(PluginCall call) {
         long id = call.getLong("downloadId", -1L);
         if (id < 0) { call.reject("Download ID is required.", "DOWNLOAD_ID_MISSING"); return; }

@@ -2,7 +2,7 @@ import type { ResearchEvent, SSEEvent } from '../types';
 import { getBase, authHeaders } from './api';
 import { isAndroidNative } from './android-native';
 import { timeZoneHeaders } from './timezone';
-import { JarvisLocalModel } from './local-model';
+import { getActiveLocalModel } from './local-model';
 import { JarvisInference } from './jarvis-inference';
 import { getApprovedLearningExamples, listTeachingInstructions } from './jarvis-learning';
 
@@ -40,7 +40,7 @@ export async function* streamChat(
   // Prompts and conversation history remain on-device. Image payloads are not
   // silently forwarded to a cloud provider when local vision is unavailable.
   if (isAndroidNative() && request.model === 'jarvis-local') {
-    const model = await JarvisLocalModel.getModelStatus();
+    const model = await getActiveLocalModel();
     if (model.ready && model.path) {
       if (request.messages.some((message) => (message.images?.length ?? 0) > 0)) {
         throw new Error('This local model runtime currently supports text only. Remove the image or use a verified vision model after vision support is enabled.');

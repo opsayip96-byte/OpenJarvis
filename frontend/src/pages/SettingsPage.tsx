@@ -42,6 +42,7 @@ import { isAndroidNative, JarvisNative, type AndroidVoice } from '../lib/android
 import { isAutoUpdateDisabled, setAutoUpdateDisabled } from '../components/Desktop/UpdateChecker';
 import { apiFetch } from '../lib/api';
 import { JarvisLocalModel, type LocalModelStatus } from '../lib/local-model';
+import { QwenModelLibrary } from '../components/QwenModelLibrary';
 import { listPendingLessons, removePendingLesson, clearPendingLessons, exportPendingLessonsJsonl, approvePendingLesson, listTeachingInstructions, removeTeachingInstruction, type JarvisLesson } from '../lib/jarvis-learning';
 
 const CLOUD_KEY_STATUS_CHANGED = 'openjarvis-cloud-key-status-changed';
@@ -1007,7 +1008,8 @@ export function SettingsPage() {
           </Section>
 
           {/* Models */}
-          {androidApp && <LocalModelManager />}\n          {androidApp && <JarvisLearningQueue />}
+          {androidApp && <LocalModelManager />}
+          {androidApp && <QwenModelLibrary />}\n          {androidApp && <JarvisLearningQueue />}
 
           <Section title="Models">
             <SettingRow label="Local models (Ollama)" description="Models available for local inference">

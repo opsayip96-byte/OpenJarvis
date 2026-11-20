@@ -34,6 +34,16 @@ interface JarvisLocalModelPlugin {
 interface JarvisModelLibraryPlugin {
   getDeviceStorageInfo(): Promise<{ availableStorageBytes: number; totalStorageBytes: number; physicalRamBytes: number; architecture: string }>;
   listModels(): Promise<{ models: LibraryModel[]; activeModelId?: string }>;
+  listDownloads(): Promise<{ downloads: Array<{
+    id: string;
+    downloadId: number;
+    fileName: string;
+    expectedSizeBytes: number;
+    status: ModelDownloadStatus['status'];
+    bytesDownloaded: number;
+    totalBytes: number;
+    progress: number;
+  }> }>;
   getActiveModel(): Promise<LocalModelStatus>;
   startDownload(options: {
     id: string;

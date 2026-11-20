@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Check, Cpu, Download, HardDrive, Loader2, RefreshCw, Trash2 } from 'lucide-react';
+import { AlertTriangle, Check, Cpu, Download, HardDrive, Loader2, RefreshCw, Trash2, XCircle } from 'lucide-react';
 import {
   estimateAndroidModelFit,
   searchQwenGgufModels,
@@ -172,6 +172,24 @@ export function QwenModelLibrary() {
     }
   };
 
+  const cancelDownload = async (item: ActiveDownload) => {
+    if (!window.confirm(`Cancel the download of ${item.model.fileName}?`)) return;
+    setBusyModel(item.model.id);
+    try {
+      const result = await JarvisModelLibrary.cancelDownload({ downloadId: item.downloadId });
+      if (result.cancelled) {
+        setDownloads((current) => current.filter((download) => download.downloadId !== item.downloadId));
+        setMessage(`Download cancelled: ${item.model.fileName}. You can start it again at any time.`);
+      } else {
+        setMessage('Android could not confirm cancellation. Refresh the library and check the download status.');
+      }
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusyModel(null);
+    }
+  };
+
   const activate = async (modelId: string) => {
     setBusyModel(modelId);
     try {
@@ -211,10 +229,18 @@ export function QwenModelLibrary() {
       </div>
 
       {capacity && (
-        <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs" style={{ color: 'var(--color-text-secondary)' }}>
-          <span className="inline-flex items-center gap-1"><Cpu size={13} /> RAM {bytes(capacity.physicalRamBytes)}</span>
-          <span className="inline-flex items-center gap-1"><HardDrive size={13} /> Free storage {bytes(capacity.availableStorageBytes)}</span>
-          <span>{capacity.architecture}</span>
+        <div className="rounded-lg p-3 space-y-2" style={{ background: 'var(--color-bg-secondary)' }}>
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs" style={{ color: 'var(--color-text-secondary)' }}>
+            <span className="inline-flex items-center gap-1"><Cpu size={13} /> Device RAM {bytes(capacity.physicalRamBytes)}</span>
+            <span className="inline-flex items-center gap-1"><HardDrive size={13} /> Phone storage free {bytes(capacity.availableStorageBytes)}</span>
+            <span>{capacity.architecture}</span>
+          </div>
+          <div className="h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--color-border)' }}>
+            <div className="h-full rounded-full" style={{ width: `${capacity.totalStorageBytes > 0 ? Math.max(0, Math.min(100, ((capacity.totalStorageBytes - capacity.availableStorageBytes) / capacity.totalStorageBytes) * 100)) : 0}%`, background: 'var(--color-accent)' }} />
+          </div>
+          <p className="text-[10px]" style={{ color: 'var(--color-text-tertiary)' }}>
+            JARVIS model files are stored on this phone in the app's private storage, not in a cloud drive. Total device storage: {bytes(capacity.totalStorageBytes)}.
+          </p>
         </div>
       )}
 
@@ -245,8 +271,15 @@ export function QwenModelLibrary() {
           <div className="h-1.5 rounded-full mt-2 overflow-hidden" style={{ background: 'var(--color-border)' }}>
             <div className="h-full rounded-full" style={{ width: `${item.status?.progress || 0}%`, background: 'var(--color-accent)' }} />
           </div>
-          <div className="text-[10px] mt-1" style={{ color: 'var(--color-text-tertiary)' }}>
-            {item.status ? `${item.status.progress}% · ${bytes(item.status.bytesDownloaded)} / ${bytes(item.status.totalBytes)}` : 'Waiting for Android DownloadManager'}
+          <div className="flex items-center justify-between gap-2 mt-1">
+            <div className="text-[10px]" style={{ color: 'var(--color-text-tertiary)' }}>
+              {item.status ? `${Math.max(0, Math.min(100, item.status.progress))}% · ${bytes(item.status.bytesDownloaded)} / ${bytes(item.status.totalBytes)}` : 'Waiting for Android DownloadManager'}
+            </div>
+            <button type="button" disabled={busyModel === item.model.id} onClick={() => void cancelDownload(item)}
+              className="inline-flex items-center gap-1 text-[10px] underline" style={{ color: 'var(--color-error)' }}>
+              {busyModel === item.model.id ? <Loader2 size={11} className="animate-spin" /> : <XCircle size={11} />}
+              Cancel
+            </button>
           </div>
         </div>
       ))}

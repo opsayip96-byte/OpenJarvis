@@ -204,7 +204,8 @@ public class JarvisModelLibraryPlugin extends Plugin {
         }
     }
 
-    private String finalizeDownload(JSONObject record) throws Exception {\n        if (findModel(record.optString("id")) != null) return "complete";
+    private String finalizeDownload(JSONObject record) throws Exception {
+        if (findModel(record.optString("id")) != null) return "complete";
         String name = record.optString("fileName");
         File dir = modelDirectory();
         File partial = new File(dir, name + ".download");
@@ -233,6 +234,7 @@ public class JarvisModelLibraryPlugin extends Plugin {
         model.put("verified", expected.isEmpty() ? "gguf-header-only" : "sha256");
         model.put("downloadUrl", record.optString("url"));
         upsertModel(model);
+        if (activeId() == null) getContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(ACTIVE, record.optString("id")).apply();
         return "complete";
     }
 

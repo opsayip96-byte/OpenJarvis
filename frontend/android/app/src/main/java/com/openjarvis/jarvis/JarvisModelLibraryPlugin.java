@@ -57,6 +57,7 @@ public class JarvisModelLibraryPlugin extends Plugin {
 
     @PluginMethod
     public void listModels(PluginCall call) {
+        migrateLegacyModel();
         try {
             JSONArray stored = readModels();
             JSArray result = new JSArray();
@@ -78,6 +79,7 @@ public class JarvisModelLibraryPlugin extends Plugin {
 
     @PluginMethod
     public void getActiveModel(PluginCall call) {
+        migrateLegacyModel();
         try {
             String id = activeId();
             JSONObject item = findModel(id);
@@ -270,7 +272,7 @@ public class JarvisModelLibraryPlugin extends Plugin {
             JSONObject model = new JSONObject();
             model.put("id", id); model.put("fileName", "Imported JARVIS model");
             model.put("path", legacy.getAbsolutePath()); model.put("sizeBytes", legacy.length());
-            model.put("sha256", sha256(legacy)); model.put("source", "legacy-import");
+            model.put("sha256", ""); model.put("source", "legacy-import");
             model.put("verified", "gguf-header-only");
             upsertModel(model);
             if (activeId() == null) getContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(ACTIVE, id).apply();

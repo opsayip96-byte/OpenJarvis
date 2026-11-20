@@ -12,8 +12,10 @@ import {
 } from '../../lib/chat-telemetry';
 import { MicButton } from './MicButton';
 import { useSpeech } from '../../hooks/useSpeech';
-import { savePendingLesson, saveTeachingInstruction } from '../../lib/jarvis-learning';
-import { JarvisLocalModel } from '../../lib/local-model';
+import { getApprovedLearningExamples, listTeachingInstructions, savePendingLesson, saveTeachingInstruction } from '../../lib/jarvis-learning';
+import { isAndroidNative } from '../../lib/android-native';
+import { JarvisInference } from '../../lib/jarvis-inference';
+import { getActiveLocalModel, JarvisLocalModel } from '../../lib/local-model';
 import type {
   ChatMessage,
   MessageTelemetry,
@@ -268,7 +270,7 @@ export function InputArea() {
       toast.error('Turn off Deep Research to send images.');
       return;
     }
-    if (!selectedModel) {
+    if (!selectedModel && (!isAndroidNative() || deepResearch)) {
       toast.error('Pick a model first (⌘K)');
       return;
     }
@@ -298,7 +300,7 @@ export function InputArea() {
 
     let convId = activeId;
     if (!convId) {
-      convId = createConversation(selectedModel);
+      convId = createConversation(selectedModel || (isAndroidNative() ? 'jarvis-local' : ''));
     }
 
     const userMsg: ChatMessage = {
@@ -374,11 +376,62 @@ export function InputArea() {
       category: 'chat',
       message: deepResearch
         ? `Research: "${content.slice(0, 80)}${content.length > 80 ? '...' : ''}"`
-        : `Request: "${content.slice(0, 80)}${content.length > 80 ? '...' : ''}" → ${selectedModel}`,
+        : `Request: "${content.slice(0, 80)}${content.length > 80 ? '...' : ''}" → ${selectedModel || 'local JARVIS'}`,
     });
 
     try {
-      if (deepResearch) {
+      // On Android, use the active GGUF model as JARVIS's primary brain.
+      // Never silently fall back to a remote model if local inference fails.
+      // Deep Research and image attachments remain on their explicitly separate
+      // online-capable paths because the current native runtime is text-only.
+      if (isAndroidNative() && !deepResearch) {
+        if (outgoingImages.length > 0) {
+          throw new Error('The current on-device JARVIS model is text-only. Remove image attachments before sending, so private images are not uploaded to a remote service.');
+        }
+        const localModel = await getActiveLocalModel();
+        if (localModel.ready && localModel.path) {
+          setStreamState({ phase: 'Loading local JARVIS model...' });
+          const runtime = await JarvisInference.getStatus();
+          if (!runtime.loaded || runtime.modelPath !== localModel.path) {
+            await JarvisInference.loadModel({ path: localModel.path });
+          }
+          setStreamState({ phase: 'Thinking locally...' });
+          const history = apiMessages.slice(1).slice(-8).map((message) => {
+            const role = message.role === 'assistant' ? 'JARVIS' : 'USER';
+            return `${role}: ${message.content}`;
+          }).join('\\n\\n');
+          const taughtInstructions = listTeachingInstructions().slice(-20);
+          const approvedExamples = getApprovedLearningExamples(content, 3);
+          const learningContext = [
+            taughtInstructions.length
+              ? `USER-APPROVED PERSONAL INSTRUCTIONS:\\n${taughtInstructions.map((item) => `- ${item}`).join('\\n')}`
+              : '',
+            approvedExamples.length
+              ? `USER-APPROVED EXAMPLES:\\n${approvedExamples.map((item) => `User: ${item.prompt}\\nJARVIS: ${item.answer}`).join('\\n\\n')}`
+              : '',
+          ].filter(Boolean).join('\\n\\n').slice(0, 1200);
+          const prompt = [
+            JARVIS_SYSTEM_PROMPT,
+            learningContext,
+            'CONVERSATION:',
+            history.slice(-4200),
+            'JARVIS:',
+          ].filter(Boolean).join('\\n\\n');
+          const localResult = await JarvisInference.generate({
+            prompt,
+            maxTokens: Math.max(64, Math.min(512, maxTokens)),
+          });
+          accumulatedContent = localResult.text.trim();
+          routedEngine = localResult.engine || 'llama.cpp';
+          if (!accumulatedContent) {
+            throw new Error('The local model returned an empty response. Try a shorter message or another GGUF model.');
+          }
+          setStreamState({ content: accumulatedContent, phase: 'Local response ready' });
+          updateLastAssistant(convId, accumulatedContent);
+        } else {
+          throw new Error('No local GGUF model is active. Import or activate a model in Settings > Qwen model library to use JARVIS on this phone.');
+        }
+      } else if (deepResearch) {
         for await (const ev of streamResearch(
           content,
           selectedModel,

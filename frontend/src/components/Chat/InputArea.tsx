@@ -11,6 +11,7 @@ import {
   resolveChatEngine,
 } from '../../lib/chat-telemetry';
 import { MicButton } from './MicButton';
+import { JarvisMemory, isNativeMemoryAvailable } from '../../lib/android-memory';
 import { useSpeech } from '../../hooks/useSpeech';
 import type {
   ChatMessage,
@@ -185,6 +186,57 @@ export function InputArea() {
       ? [input.trim(), recognizedText.trim()].filter(Boolean).join(' ')
       : input.trim();
     if (!content || streamState.isStreaming) return;
+
+    // Native Android memory commands run entirely on-device. They do not
+    // require a selected model, backend URL, API key, or internet connection.
+    const command = content.trim();
+    const lower = command.toLowerCase();
+    const isMemoryCommand = /^(save this|memories|show memory|search memory\\s+)/i.test(command);
+    if (isNativeMemoryAvailable() && isMemoryCommand) {
+      setInput('');
+      let localConvId = activeId;
+      if (!localConvId) localConvId = createConversation(selectedModel || 'jarvis-local');
+      addMessage(localConvId, {
+        id: generateId(), role: 'user', content: command, timestamp: Date.now(),
+      });
+      let reply = '';
+      try {
+        if (lower.startsWith('save this')) {
+          const payload = command.replace(/^save this\\b[:\\s-]*/i, '').trim()
+            || [...messages].reverse().find((m) => m.role === 'user')?.content?.trim()
+            || '';
+          if (!payload) {
+            reply = 'Tell me what to save, or say “save this” immediately after the information you want remembered.';
+          } else {
+            const category = /work|project|code|app|github/i.test(payload) ? 'projects'
+              : /study|exam|german|school|college/i.test(payload) ? 'study'
+              : /prefer|like|want|always|never/i.test(payload) ? 'preferences'
+              : 'general';
+            const saved = await JarvisMemory.save(payload, category);
+            const total = await JarvisMemory.count();
+            reply = 'Saved to permanent on-device memory, record #' + saved.id + '.\\nCategory: ' + saved.category + '\\nMemory records: ' + total.count + '.';
+          }
+        } else if (lower === 'memories' || lower === 'show memory') {
+          const result = await JarvisMemory.list(30);
+          reply = result.items.length
+            ? 'LOCAL MEMORY (' + result.items.length + ' latest records)\\n' + result.items.map((m) => '#' + m.id + ' [' + m.category + '] ' + m.content).join('\\n')
+            : 'Your on-device memory is empty.';
+        } else {
+          const query = command.replace(/^search memory\\s+/i, '').trim();
+          const result = await JarvisMemory.search(query, 20);
+          reply = result.items.length
+            ? 'MEMORY SEARCH: ' + query + '\\n' + result.items.map((m) => '#' + m.id + ' [' + m.category + '] ' + m.content).join('\\n')
+            : 'No saved memories matched “' + query + '”.';
+        }
+      } catch (error) {
+        reply = 'Local memory operation failed: ' + (error instanceof Error ? error.message : String(error));
+      }
+      addMessage(localConvId, {
+        id: generateId(), role: 'assistant', content: reply, timestamp: Date.now(),
+      });
+      return;
+    }
+
     if (!selectedModel) {
       toast.error('Pick a model first (⌘K)');
       return;

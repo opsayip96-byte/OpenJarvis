@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { Send, Square, Paperclip, Search } from 'lucide-react';
+import { Send, Square, Paperclip, Search, Brain } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAppStore, generateId } from '../../lib/store';
 import { streamChat, streamResearch } from '../../lib/sse';
@@ -605,6 +605,24 @@ export function InputArea() {
     <div className="chat-input-safe-area px-4 pb-4 pt-2" style={{ maxWidth: 'var(--chat-max-width)', margin: '0 auto', width: '100%' }}>
       <div className="mb-2 flex flex-col gap-1">
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={async () => {
+              try {
+                const imported = await JarvisNanoNative.importModel();
+                useAppStore.getState().setSelectedModel('jarvis-nano-v3');
+                toast.success('JARVIS-Nano v3 loaded. Offline chat is ready.');
+              } catch (error) {
+                toast.error(error instanceof Error ? error.message : 'Could not import JARVIS-Nano model.');
+              }
+            }}
+            disabled={streamState.isStreaming}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs"
+            style={{ border: '1px solid var(--color-accent)', color: 'var(--color-accent)' }}
+            title="Import your converted JARVIS-Nano v3 GGUF model"
+          >
+            <Brain size={12} /> Load JARVIS-Nano
+          </button>
           <button
             type="button"
             onClick={() => setDeepResearch(!deepResearch)}

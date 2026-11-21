@@ -37,11 +37,13 @@ public class JarvisOfflinePlugin extends Plugin {
 
     @PluginMethod
     public void status(PluginCall call) {
-        JSObject result = new JSObject();
-        result.put("runtimeAvailable", JarvisLlamaEngine.isAvailable());
-        result.put("modelLoaded", modelLoaded);
-        result.put("models", listModelNames());
-        call.resolve(result);
+        inferenceExecutor.execute(() -> {
+            JSObject result = new JSObject();
+            result.put("runtimeAvailable", JarvisLlamaEngine.isAvailable());
+            result.put("modelLoaded", modelLoaded);
+            result.put("models", listModelNames());
+            call.resolve(result);
+        });
     }
 
     @PluginMethod

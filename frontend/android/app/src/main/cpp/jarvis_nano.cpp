@@ -4,6 +4,7 @@
 #include <mutex>
 #include <algorithm>
 #include <cstring>
+#include <cmath>
 #include <random>
 #include <utility>
 #include <android/log.h>

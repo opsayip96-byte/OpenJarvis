@@ -219,7 +219,7 @@ export function InputArea() {
         } else if (lower === 'memories' || lower === 'show memory') {
           const result = await JarvisMemory.list(30);
           reply = result.items.length
-            ? 'LOCAL MEMORY (' + result.items.length + ' latest records)\\n' + result.items.map((m) => '#' + m.id + ' [' + m.category + '] ' + m.content).join('\\n')
+            ? 'LOCAL MEMORY (' + result.items.length + ' latest records)\n' + result.items.map((m) => '#' + m.id + ' [' + m.category + '] ' + m.content).join('\n')
             : 'Your on-device memory is empty.';
         } else if (lower === 'memory count') {
           const total = await JarvisMemory.count();

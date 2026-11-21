@@ -194,7 +194,7 @@ export function ChatArea() {
               {getGreeting()}
             </h2>
             <p className="text-sm text-center max-w-sm mb-6" style={{ color: 'var(--color-text-secondary)' }}>
-              Your assistant is ready. Requests use the model selected in the sidebar.
+              Send a message below to talk with JARVIS. Replies use your currently selected model.
             </p>
 
             {/* Quick action hints */}

@@ -3,6 +3,7 @@ import { Send, Square, Paperclip, Search } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAppStore, generateId } from '../../lib/store';
 import { streamChat, streamResearch } from '../../lib/sse';
+import { JarvisNanoNative } from '../../lib/jarvis-nano-native';
 import { fetchSavings, getBase, authHeaders, isMemoryContextEnabled } from '../../lib/api';
 import { listConnectors, getSyncStatus } from '../../lib/connectors-api';
 import { serializeToolCallArguments } from '../../lib/tool-call';
@@ -261,7 +262,25 @@ export function InputArea() {
     });
 
     try {
-      if (deepResearch && !selectedModel.startsWith('jarvis-nano-v')) {
+      if (selectedModel === 'jarvis-nano-v3') {
+        const status = await JarvisNanoNative.getStatus();
+        if (!status.runtimeAvailable) throw new Error('JARVIS-Nano offline runtime is missing from this APK.');
+        if (!status.loaded) throw new Error('Import your JARVIS-Nano v3 GGUF model from the JARVIS model settings first.');
+        setStreamState({ phase: 'JARVIS-Nano is thinking offline...' });
+        const history = useAppStore.getState().messages
+          .filter((m) => m.role === 'user' || m.role === 'assistant')
+          .slice(-8)
+          .map((m) => `${m.role === 'user' ? '[USER]' : '[ASSISTANT]'}\\n${m.content}`)
+          .join('\\n');
+        const result = await JarvisNanoNative.generate({
+          prompt: `[SYSTEM]\\nYou are JARVIS-Nano, an experimental offline assistant. Be honest when unsure.\\n${history}\\n[ASSISTANT]\\n`,
+          maxTokens,
+        });
+        accumulatedContent = result.text.trim();
+        if (!accumulatedContent) throw new Error('JARVIS-Nano returned an empty response.');
+        ttftMs = Date.now() - startTime;
+        setStreamState({ content: accumulatedContent, phase: '' });
+      } else if (deepResearch) {
         for await (const ev of streamResearch(
           content,
           selectedModel,

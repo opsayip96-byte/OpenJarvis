@@ -191,7 +191,7 @@ export function InputArea() {
     // require a selected model, backend URL, API key, or internet connection.
     const command = content.trim();
     const lower = command.toLowerCase();
-    const isMemoryCommand = /^(save this|memories|show memory|search memory\\s+)/i.test(command);
+    const isMemoryCommand = /^(save this|memories|show memory|search memory\s+)/i.test(command);
     if (isNativeMemoryAvailable() && isMemoryCommand) {
       setInput('');
       let localConvId = activeId;
@@ -202,7 +202,7 @@ export function InputArea() {
       let reply = '';
       try {
         if (lower.startsWith('save this')) {
-          const payload = command.replace(/^save this\\b[:\\s-]*/i, '').trim()
+          const payload = command.replace(/^save this\b[:\s-]*/i, '').trim()
             || [...messages].reverse().find((m) => m.role === 'user')?.content?.trim()
             || '';
           if (!payload) {
@@ -214,18 +214,18 @@ export function InputArea() {
               : 'general';
             const saved = await JarvisMemory.save(payload, category);
             const total = await JarvisMemory.count();
-            reply = 'Saved to permanent on-device memory, record #' + saved.id + '.\\nCategory: ' + saved.category + '\\nMemory records: ' + total.count + '.';
+            reply = 'Saved to permanent on-device memory, record #' + saved.id + '.\nCategory: ' + saved.category + '\nMemory records: ' + total.count + '.';
           }
         } else if (lower === 'memories' || lower === 'show memory') {
           const result = await JarvisMemory.list(30);
           reply = result.items.length
-            ? 'LOCAL MEMORY (' + result.items.length + ' latest records)\\n' + result.items.map((m) => '#' + m.id + ' [' + m.category + '] ' + m.content).join('\\n')
+            ? 'LOCAL MEMORY (' + result.items.length + ' latest records)\n' + result.items.map((m) => '#' + m.id + ' [' + m.category + '] ' + m.content).join('\n')
             : 'Your on-device memory is empty.';
         } else {
-          const query = command.replace(/^search memory\\s+/i, '').trim();
+          const query = command.replace(/^search memory\s+/i, '').trim();
           const result = await JarvisMemory.search(query, 20);
           reply = result.items.length
-            ? 'MEMORY SEARCH: ' + query + '\\n' + result.items.map((m) => '#' + m.id + ' [' + m.category + '] ' + m.content).join('\\n')
+            ? 'MEMORY SEARCH: ' + query + '\n' + result.items.map((m) => '#' + m.id + ' [' + m.category + '] ' + m.content).join('\n')
             : 'No saved memories matched “' + query + '”.';
         }
       } catch (error) {

@@ -623,6 +623,7 @@ export function InputArea() {
     deepResearch,
     temperature,
     maxTokens,
+    messages,
   ]);
 
   sendRecognizedSpeechRef.current = (text) => sendMessage(text);

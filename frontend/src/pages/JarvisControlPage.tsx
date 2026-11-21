@@ -105,6 +105,7 @@ export function JarvisControlPage() {
   const settings = useAppStore((s) => s.settings);
   const models = useAppStore((s) => s.models);
   const selectedModel = useAppStore((s) => s.selectedModel);
+  const deepResearch = useAppStore((s) => s.deepResearch);
   const [command, setCommand] = useState('');
   const [pending, setPending] = useState<Action | null>(null);
   const [busy, setBusy] = useState(false);
@@ -365,7 +366,7 @@ export function JarvisControlPage() {
               <div className="flex justify-between"><span>Temperature</span><span style={{ color: 'var(--color-text)' }}>{settings.temperature}</span></div>
               <div className="flex justify-between"><span>Maximum tokens</span><span style={{ color: 'var(--color-text)' }}>{settings.maxTokens}</span></div>
               <div className="flex justify-between"><span>Font size</span><span style={{ color: 'var(--color-text)' }}>{settings.fontSize}</span></div>
-              <div className="flex justify-between"><span>Deep research</span><span style={{ color: 'var(--color-text)' }}>{useAppStore.getState().deepResearch ? 'On' : 'Off'}</span></div>
+              <div className="flex justify-between"><span>Deep research</span><span style={{ color: 'var(--color-text)' }}>{deepResearch ? 'On' : 'Off'}</span></div>
             </div>
             <button type="button" onClick={() => navigate('/settings')} className="mt-4 inline-flex min-h-10 items-center gap-1 text-xs" style={{ color: 'var(--color-accent)' }}>Advanced settings <ChevronRight size={14} /></button>
           </div>

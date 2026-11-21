@@ -1,0 +1,6 @@
+torch>=2.2
+transformers>=4.45,<5
+tokenizers>=0.20
+datasets>=3.0
+accelerate>=1.0
+safetensors>=0.4

@@ -1,8 +1,9 @@
 name: Android APK
+# Re-triggered after repository Actions were enabled.
 
 on:
   push:
-    branches: [main, "codex/**", "jarvis-android-build"]
+    branches: [main, "codex/**", "jarvis-android-build", "jarvis-standalone-memory"]
     paths:
       - "frontend/**"
       - ".github/workflows/android-build.yml"
@@ -49,7 +50,7 @@ jobs:
 
       - name: Install Android platform, build tools, and NDK
         run: |
-          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018"
+          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0" "cmake;3.22.1" "ndk;27.2.12479018"
 
       - name: Install frontend dependencies
         working-directory: frontend

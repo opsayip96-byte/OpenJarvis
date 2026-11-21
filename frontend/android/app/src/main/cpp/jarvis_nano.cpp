@@ -4,6 +4,8 @@
 #include <mutex>
 #include <algorithm>
 #include <cstring>
+#include <random>
+#include <utility>
 #include <android/log.h>
 #include "llama.h"
 
@@ -13,6 +15,7 @@ static std::mutex g_mutex;
 static llama_model *g_model = nullptr;
 static llama_context *g_ctx = nullptr;
 static const llama_vocab *g_vocab = nullptr;
+static std::mt19937 g_rng(0x4A415256);
 
 static void unload_locked() {
     if (g_ctx) { llama_free(g_ctx); g_ctx = nullptr; }
@@ -68,16 +71,33 @@ Java_com_openjarvis_jarvis_JarvisNanoPlugin_nativeGenerate(JNIEnv *env, jclass, 
     for (int i = 0; i < limit; ++i) {
         const float *logits = llama_get_logits_ith(g_ctx, -1);
         if (!logits) break;
-        llama_token next = 0;
-        float best = logits[0];
-        for (llama_token t = 1; t < llama_vocab_n_tokens(g_vocab); ++t) {
-            if (logits[t] > best) { best = logits[t]; next = t; }
+        const int vocab_size = llama_vocab_n_tokens(g_vocab);
+        std::vector<std::pair<float, llama_token>> candidates;
+        candidates.reserve((size_t)vocab_size);
+        for (llama_token t = 0; t < vocab_size; ++t) candidates.emplace_back(logits[t], t);
+        const size_t k = std::min<size_t>(40, candidates.size());
+        std::partial_sort(candidates.begin(), candidates.begin() + k, candidates.end(),
+            [](const auto &a, const auto &b) { return a.first > b.first; });
+        const float max_logit = candidates.front().first;
+        std::vector<double> weights(k);
+        double total_weight = 0.0;
+        for (size_t j = 0; j < k; ++j) {
+            weights[j] = std::exp((candidates[j].first - max_logit) / 0.75);
+            total_weight += weights[j];
         }
+        std::uniform_real_distribution<double> distribution(0.0, total_weight);
+        double draw = distribution(g_rng);
+        size_t chosen = 0;
+        for (; chosen + 1 < k; ++chosen) {
+            draw -= weights[chosen];
+            if (draw <= 0.0) break;
+        }
+        llama_token next = candidates[chosen].second;
         if (llama_vocab_is_eog(g_vocab, next)) break;
         int n_piece = llama_token_to_piece(g_vocab, next, piece.data(), (int)piece.size(), 0, true);
         if (n_piece > 0) {
             std::string part(piece.data(), (size_t)n_piece);
-            if (part.find("[EOS]") != std::string::npos) break;
+            if (part.find("[EOS]") != std::string::npos || part.find("[USER]") != std::string::npos || part.find("[SYSTEM]") != std::string::npos) break;
             output += part;
             if (output.size() >= 16000) break;
         }

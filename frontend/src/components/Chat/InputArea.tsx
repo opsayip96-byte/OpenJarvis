@@ -259,7 +259,7 @@ export function InputArea() {
 
     let convId = activeId;
     if (!convId) {
-      convId = createConversation(selectedModel);
+      convId = createConversation(selectedModel || (isJarvisOfflineMode() ? 'jarvis-offline' : ''));
     }
 
     const userMsg: ChatMessage = {

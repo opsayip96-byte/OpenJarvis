@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
 import {
   Activity, Bot, Check, ChevronRight, CircleAlert, Cpu, FileText,
-  LockKeyhole, Mic, Play, ShieldCheck, Smartphone, Sparkles, X,
+  LockKeyhole, Mic, Play, ShieldCheck, Smartphone, Sparkles, X, MessageSquare,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAppStore } from '../lib/store';
@@ -333,8 +333,13 @@ export function JarvisControlPage() {
               Control app settings, conversations, models and supported Android actions from one place.
             </p>
           </div>
-          <div className="flex items-center gap-2 rounded-full px-3 py-2 text-xs" style={{ background: 'var(--color-accent-subtle)', color: 'var(--color-accent)' }}>
-            <ShieldCheck size={14} /> Trusted automation
+          <div className="flex flex-wrap items-center gap-2">
+            <button type="button" onClick={() => navigate('/')} className="inline-flex min-h-11 items-center gap-2 rounded-full px-4 py-2 text-sm font-medium" style={{ background: 'var(--color-accent)', color: 'white' }}>
+              <MessageSquare size={16} /> Chat with JARVIS
+            </button>
+            <div className="flex items-center gap-2 rounded-full px-3 py-2 text-xs" style={{ background: 'var(--color-accent-subtle)', color: 'var(--color-accent)' }}>
+              <ShieldCheck size={14} /> Trusted automation
+            </div>
           </div>
         </header>
 

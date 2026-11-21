@@ -272,10 +272,10 @@ export function InputArea() {
 
     // Build API messages before adding assistant placeholder
     const currentMessages = useAppStore.getState().messages;
-    let apiMessages = currentMessages.map((m) => ({
-      role: m.role,
-      content: m.content,
-    }));
+    let apiMessages = [
+      { role: 'system', content: 'You are JARVIS, the user’s personal AI assistant. Be clear, capable, calm, proactive, and truthful. Use available tools when appropriate. Never claim to have performed an action or checked information unless you actually did. Protect the user’s data and ask before risky actions.' },
+      ...currentMessages.map((m) => ({ role: m.role, content: m.content })),
+    ];
 
     // Retrieve on-device memories only when the existing memory-context
     // preference is enabled. The user's opt-in controls whether they leave
@@ -345,8 +345,7 @@ export function InputArea() {
 
     try {
       if (isJarvisOfflineMode()) {
-        const systemPrompt = 'You are JARVIS, a capable, calm, precise personal AI assistant. Be honest about uncertainty and never claim to have used tools you did not use. You are running locally on the user\'s device with no internet access.';
-        const prompt = [systemPrompt, ...apiMessages.map((message) => message.role.toUpperCase() + ': ' + message.content), 'ASSISTANT:'].join('\\n\\n');
+        const prompt = apiMessages.map((message) => message.role.toUpperCase() + ': ' + message.content).join('\n\n') + '\n\nASSISTANT:';
         setStreamState({ phase: 'JARVIS Offline AI is thinking...' });
         const localResult = await JarvisOffline.generate({ prompt, maxTokens, temperature });
         accumulatedContent = localResult.text.trim() || 'The offline model returned an empty response.';

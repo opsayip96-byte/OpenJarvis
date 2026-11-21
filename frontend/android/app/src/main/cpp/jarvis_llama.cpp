@@ -1,0 +1,107 @@
+#include <jni.h>
+#include <android/log.h>
+#include <llama.h>
+#include <algorithm>
+#include <mutex>
+#include <string>
+#include <vector>
+
+#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, "JarvisLlama", __VA_ARGS__)
+
+namespace {
+std::mutex engineMutex;
+llama_model * model = nullptr;
+llama_context * context = nullptr;
+const llama_vocab * vocab = nullptr;
+
+void releaseLocked() {
+    if (context) { llama_free(context); context = nullptr; }
+    if (model) { llama_model_free(model); model = nullptr; }
+    vocab = nullptr;
+}
+
+std::vector<llama_token> tokenize(const std::string & text, bool addBos) {
+    int32_t capacity = std::max<int32_t>(256, static_cast<int32_t>(text.size() / 2 + 16));
+    std::vector<llama_token> tokens(capacity);
+    int32_t count = llama_tokenize(vocab, text.c_str(), static_cast<int32_t>(text.size()),
+                                   tokens.data(), capacity, addBos, true);
+    if (count < 0) {
+        capacity = -count;
+        tokens.resize(capacity);
+        count = llama_tokenize(vocab, text.c_str(), static_cast<int32_t>(text.size()),
+                               tokens.data(), capacity, addBos, true);
+    }
+    if (count < 0) return {};
+    tokens.resize(count);
+    return tokens;
+}
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_openjarvis_jarvis_JarvisLlamaEngine_nativeLoad(JNIEnv * env, jclass, jstring path) {
+    const char * raw = env->GetStringUTFChars(path, nullptr);
+    if (!raw) return JNI_FALSE;
+    std::lock_guard<std::mutex> lock(engineMutex);
+    releaseLocked();
+    llama_backend_init();
+    auto params = llama_model_default_params();
+    params.n_gpu_layers = 0;
+    model = llama_model_load_from_file(raw, params);
+    env->ReleaseStringUTFChars(path, raw);
+    if (!model) { LOGE("Could not load GGUF model"); return JNI_FALSE; }
+    auto ctxParams = llama_context_default_params();
+    ctxParams.n_ctx = 2048;
+    ctxParams.n_batch = 512;
+    ctxParams.n_ubatch = 256;
+    ctxParams.n_threads = 4;
+    ctxParams.n_threads_batch = 4;
+    context = llama_init_from_model(model, ctxParams);
+    if (!context) { releaseLocked(); LOGE("Could not create inference context"); return JNI_FALSE; }
+    vocab = llama_model_get_vocab(model);
+    return vocab ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_openjarvis_jarvis_JarvisLlamaEngine_nativeGenerate(JNIEnv * env, jclass,
+        jstring promptValue, jint maxTokens, jfloat temperature) {
+    const char * rawPrompt = env->GetStringUTFChars(promptValue, nullptr);
+    if (!rawPrompt) return env->NewStringUTF("");
+    std::string prompt(rawPrompt);
+    env->ReleaseStringUTFChars(promptValue, rawPrompt);
+
+    std::lock_guard<std::mutex> lock(engineMutex);
+    if (!model || !context || !vocab) return env->NewStringUTF("JARVIS offline model is not loaded.");
+    llama_memory_clear(llama_get_memory(context), true);
+    auto input = tokenize(prompt, true);
+    if (input.empty() || input.size() >= llama_n_ctx(context)) return env->NewStringUTF("Prompt is empty or exceeds the offline context window.");
+
+    llama_batch batch = llama_batch_get_one(input.data(), static_cast<int32_t>(input.size()));
+    if (llama_decode(context, batch) != 0) return env->NewStringUTF("JARVIS could not process the prompt.");
+
+    auto samplerParams = llama_sampler_chain_default_params();
+    llama_sampler * sampler = llama_sampler_chain_init(samplerParams);
+    llama_sampler_chain_add(sampler, llama_sampler_init_top_k(40));
+    llama_sampler_chain_add(sampler, llama_sampler_init_top_p(0.92f, 1));
+    llama_sampler_chain_add(sampler, llama_sampler_init_temp(std::max(0.05f, std::min(temperature, 1.5f))));
+    llama_sampler_chain_add(sampler, llama_sampler_init_dist(LLAMA_DEFAULT_SEED));
+
+    std::string output;
+    const int limit = std::max(1, std::min(static_cast<int>(maxTokens), 1024));
+    for (int i = 0; i < limit; ++i) {
+        llama_token token = llama_sampler_sample(sampler, context, -1);
+        if (llama_vocab_is_eog(vocab, token)) break;
+        char piece[256];
+        int32_t n = llama_token_to_piece(vocab, token, piece, sizeof(piece), 0, true);
+        if (n > 0) output.append(piece, n);
+        batch = llama_batch_get_one(&token, 1);
+        if (llama_decode(context, batch) != 0) break;
+    }
+    llama_sampler_free(sampler);
+    return env->NewStringUTF(output.c_str());
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_openjarvis_jarvis_JarvisLlamaEngine_nativeUnload(JNIEnv *, jclass) {
+    std::lock_guard<std::mutex> lock(engineMutex);
+    releaseLocked();
+}

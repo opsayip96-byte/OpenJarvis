@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAppStore } from '../lib/store';
-import { deleteModel, fetchModels, preloadModel } from '../lib/api';
+import { clearIndexedMemory, deleteModel, fetchModels, preloadModel } from '../lib/api';
 import { isAndroidNative, JarvisNative } from '../lib/android-native';
 import { JarvisControlNative } from '../lib/jarvis-control-native';
 
@@ -22,7 +22,8 @@ type Action =
   | { type: 'select-model'; model: string; label: string }
   | { type: 'launch-app'; app: string; label: string }
   | { type: 'delete-model'; model: string; label: string }
-  | { type: 'delete-chat'; label: string };
+  | { type: 'delete-chat'; label: string }
+  | { type: 'clear-memory'; label: string };
 
 type AuditRow = { at: number; label: string; result: 'done' | 'denied' | 'failed' };
 
@@ -76,6 +77,8 @@ function parseCommand(raw: string, models: Array<{ id: string }>): Action | null
   }
   if (/^(?:delete|remove) (?:this |current )?(?:chat|conversation)$/.test(text))
     return { type: 'delete-chat', label: 'Delete the current conversation' };
+  if (/^(?:clear|delete) (?:indexed )?memory$/.test(text))
+    return { type: 'clear-memory', label: 'Clear indexed memory' };
   return null;
 }
 
@@ -105,7 +108,7 @@ export function JarvisControlPage() {
     try { localStorage.setItem(AUDIT_KEY, JSON.stringify(next)); } catch { /* best effort */ }
     const state = result === 'done' ? 'info' : result === 'denied' ? 'warn' : 'error';
     useAppStore.getState().addLogEntry({
-      timestamp: Date.now(), level: state, category: 'control',
+      timestamp: Date.now(), level: state, category: 'tool',
       message: 'JARVIS control: ' + label + ' (' + result + ')',
     });
   };
@@ -153,6 +156,11 @@ export function JarvisControlPage() {
           store.deleteConversation(store.activeId);
           navigate('/');
           break;
+        case 'clear-memory': {
+          const removed = await clearIndexedMemory();
+          toast.success('Cleared ' + removed + ' indexed memory entries.');
+          break;
+        }
         case 'delete-model': {
           await deleteModel(action.model);
           const refreshed = await fetchModels();
@@ -180,7 +188,7 @@ export function JarvisControlPage() {
       toast.error('Command not recognized. Try one of the examples below.');
       return;
     }
-    if (action.type === 'delete-chat' || action.type === 'delete-model') {
+    if (action.type === 'delete-chat' || action.type === 'delete-model' || action.type === 'clear-memory') {
       setPending(action);
       return;
     }
@@ -217,7 +225,7 @@ export function JarvisControlPage() {
     'set theme dark', 'voice output on', 'voice autoplay off',
     'set temperature 0.5', 'set max tokens 2048', 'new chat',
     'open agents', 'switch model to MODEL_ID', 'open youtube',
-    'delete current chat',
+    'delete current chat', 'clear memory',
   ];
 
   return (

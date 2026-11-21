@@ -22,8 +22,8 @@ export async function* streamChat(
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
     const history = request.messages.slice(-6).map((message) =>
       message.role === 'assistant'
-        ? `[ASSISTANT] ${message.content}\\n`
-        : `[USER] ${message.content}\\n`,
+        ? `[ASSISTANT] ${message.content}\n`
+        : `[USER] ${message.content}\n`,
     ).join('');
     const prompt = history + '[ASSISTANT]';
     const result = await JarvisNanoNative.generate({

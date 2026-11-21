@@ -1,18 +1,16 @@
 #!/usr/bin/env python3
 """Train JARVIS-Nano from random initialization.
 
-This deliberately does NOT load Qwen, Llama, Gemma, or any pretrained weights.
-Input is a UTF-8 text file or JSONL file with a "text" field, one document per
-line. The resulting Llama-compatible architecture can be converted to GGUF
-with the pinned llama.cpp converter and run by the Android JNI engine.
+Accepts plain-text documents or JSONL records with a text/content field, or
+OpenAI-style messages arrays. No pretrained weights are loaded.
 """
 from __future__ import annotations
 
 import argparse
 import json
-import math
 from pathlib import Path
 
+import torch
 from datasets import Dataset
 from tokenizers import Tokenizer, decoders, models, pre_tokenizers, trainers
 from transformers import (
@@ -28,6 +26,23 @@ from transformers import (
 SPECIAL = ["<|pad|>", "<|unk|>", "<|bos|>", "<|eos|>", "<|user|>", "<|assistant|>", "<|system|>"]
 
 
+def format_messages(messages: list[dict]) -> str:
+    """Preserve conversation roles when the source is chat-formatted JSONL."""
+    chunks = []
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        role = str(message.get("role", "user")).lower()
+        if role not in {"system", "user", "assistant"}:
+            continue
+        body = message.get("content", "")
+        if isinstance(body, list):
+            body = " ".join(str(part.get("text", "")) if isinstance(part, dict) else str(part) for part in body)
+        if body:
+            chunks.append(f"<|{role}|>{body}")
+    return "\\n".join(chunks)
+
+
 def read_documents(path: Path) -> list[str]:
     docs: list[str] = []
     with path.open("r", encoding="utf-8") as stream:
@@ -37,7 +52,12 @@ def read_documents(path: Path) -> list[str]:
                 continue
             try:
                 item = json.loads(line)
-                text = item.get("text") or item.get("content") or ""
+                if isinstance(item, dict) and isinstance(item.get("messages"), list):
+                    text = format_messages(item["messages"])
+                elif isinstance(item, dict):
+                    text = item.get("text") or item.get("content") or ""
+                else:
+                    text = str(item)
             except json.JSONDecodeError:
                 text = line
             if isinstance(text, str) and text.strip():
@@ -89,25 +109,32 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=2)
     parser.add_argument("--gradient-accumulation", type=int, default=16)
     parser.add_argument("--learning-rate", type=float, default=3e-4)
+    parser.add_argument("--hidden-size", type=int, default=768)
+    parser.add_argument("--layers", type=int, default=12)
+    parser.add_argument("--heads", type=int, default=12)
+    parser.add_argument("--intermediate-size", type=int, default=2048)
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
 
     if args.vocab_size < 512 or args.sequence_length < 128:
         raise ValueError("vocab-size must be >=512 and sequence-length >=128")
+    if args.hidden_size % args.heads:
+        raise ValueError("hidden-size must be divisible by heads")
+    if args.layers < 1 or args.heads < 1:
+        raise ValueError("layers and heads must be positive")
+
     set_seed(args.seed)
     args.output.mkdir(parents=True, exist_ok=True)
     docs = read_documents(args.data)
     tokenizer = train_tokenizer(docs, args.output, args.vocab_size)
 
-    # JARVIS-Nano v0: approximately 100M parameters, initialized randomly.
-    # Llama architecture is used for GGUF/llama.cpp compatibility, not weights.
     config = LlamaConfig(
         vocab_size=len(tokenizer),
-        hidden_size=768,
-        intermediate_size=2048,
-        num_hidden_layers=12,
-        num_attention_heads=12,
-        num_key_value_heads=12,
+        hidden_size=args.hidden_size,
+        intermediate_size=args.intermediate_size,
+        num_hidden_layers=args.layers,
+        num_attention_heads=args.heads,
+        num_key_value_heads=args.heads,
         max_position_embeddings=args.sequence_length,
         rms_norm_eps=1e-5,
         rope_theta=10000.0,
@@ -116,26 +143,32 @@ def main() -> None:
         eos_token_id=tokenizer.eos_token_id,
         pad_token_id=tokenizer.pad_token_id,
     )
-    model = LlamaForCausalLM(config)  # Random initialization. No from_pretrained().
+    model = LlamaForCausalLM(config)  # Random initialization, never from_pretrained().
     model.config.use_cache = False
 
-    tokenized = tokenizer(
-        docs,
-        truncation=False,
-        add_special_tokens=False,
-    )["input_ids"]
-    flat = [token for document in tokenized for token in document]
+    # Keep document boundaries explicit so unrelated documents do not blend.
+    encoded = tokenizer(docs, truncation=False, add_special_tokens=False)["input_ids"]
+    flat: list[int] = []
+    for document in encoded:
+        flat.extend(document)
+        flat.append(tokenizer.eos_token_id)
     block = args.sequence_length
     usable = (len(flat) // block) * block
     if usable < block * 8:
         raise ValueError(
             f"Corpus is too small after tokenization ({usable} tokens). "
-            "Provide at least 8 full sequence blocks; substantially more data is needed for useful quality."
+            "Provide at least 8 full sequence blocks; useful quality requires far more."
         )
-    chunks = [flat[i : i + block] for i in range(0, usable, block)]
+    chunks = [flat[i:i + block] for i in range(0, usable, block)]
     dataset = Dataset.from_dict({"input_ids": chunks})
     dataset = dataset.map(lambda row: {"attention_mask": [1] * len(row["input_ids"])})
-    collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
+
+    cuda = torch.cuda.is_available()
+    bf16 = bool(cuda and torch.cuda.is_bf16_supported())
+    fp16 = bool(cuda and not bf16)
+    print(f"Training device: {'CUDA' if cuda else 'CPU'} | bf16={bf16} | fp16={fp16}")
+    if not cuda:
+        print("WARNING: CPU training is a smoke-test path, not practical for the default model.")
 
     training_args = TrainingArguments(
         output_dir=str(args.output / "checkpoints"),
@@ -149,19 +182,19 @@ def main() -> None:
         logging_steps=10,
         save_steps=500,
         save_total_limit=2,
-        bf16=False,
-        fp16=True,
+        bf16=bf16,
+        fp16=fp16,
         gradient_checkpointing=True,
         optim="adamw_torch",
         report_to=[],
         remove_unused_columns=False,
-        dataloader_num_workers=2,
+        dataloader_num_workers=2 if cuda else 0,
     )
     trainer = Trainer(
         model=model,
         args=training_args,
         train_dataset=dataset,
-        data_collator=collator,
+        data_collator=DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False),
     )
     result = trainer.train()
     model.config.use_cache = True
@@ -178,7 +211,8 @@ def main() -> None:
         "training_tokens": usable,
         "sequence_length": block,
         "train_loss": result.metrics.get("train_loss"),
-        "note": "Research starter model. Quality depends on corpus scale and evaluation; not comparable to large foundation models.",
+        "training_device": "cuda" if cuda else "cpu",
+        "note": "New randomly initialized research model. Quality depends on corpus scale and evaluation; not comparable to large foundation models.",
     }
     (args.output / "model-card.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
     print(json.dumps(metadata, indent=2))

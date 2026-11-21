@@ -63,23 +63,39 @@ public class JarvisOfflinePlugin extends Plugin {
         }
         Uri uri = result.getData().getData();
         if (uri == null) { call.reject("No model file was selected.", "MODEL_IMPORT_FAILED"); return; }
-        String name = "jarvis-model.gguf";
-        try (InputStream input = getContext().getContentResolver().openInputStream(uri)) {
-            if (input == null) throw new IllegalStateException("Cannot open selected file.");
+        final String name = "jarvis-model.gguf";
+        inferenceExecutor.execute(() -> {
+            File temporary = new File(modelDirectory, name + ".part");
             File target = new File(modelDirectory, name);
-            try (FileOutputStream output = new FileOutputStream(target)) {
-                byte[] buffer = new byte[1024 * 1024];
-                int read;
-                while ((read = input.read(buffer)) != -1) output.write(buffer, 0, read);
+            try (InputStream input = getContext().getContentResolver().openInputStream(uri)) {
+                if (input == null) throw new IllegalStateException("Cannot open selected file.");
+                byte[] header = new byte[4];
+                int headerBytes = input.read(header);
+                if (headerBytes != 4 || header[0] != 'G' || header[1] != 'G' || header[2] != 'U' || header[3] != 'F') {
+                    throw new IllegalArgumentException("This file does not have the GGUF file signature. Choose a .gguf model.");
+                }
+                try (FileOutputStream output = new FileOutputStream(temporary)) {
+                    output.write(header);
+                    byte[] buffer = new byte[1024 * 1024];
+                    int read;
+                    while ((read = input.read(buffer)) != -1) output.write(buffer, 0, read);
+                    output.getFD().sync();
+                }
+                if (temporary.length() < 1024 * 1024) {
+                    throw new IllegalArgumentException("The selected file is too small to be a valid GGUF model.");
+                }
+                if (target.exists() && !target.delete()) {
+                    throw new IllegalStateException("Could not replace the previously imported model.");
+                }
+                if (!temporary.renameTo(target)) {
+                    throw new IllegalStateException("Could not finalize the imported model file.");
+                }
+                call.resolve(new JSObject().put("name", name).put("sizeBytes", target.length()));
+            } catch (Exception error) {
+                temporary.delete();
+                call.reject("Could not import GGUF model: " + error.getMessage(), "MODEL_IMPORT_FAILED", error);
             }
-            if (target.length() < 1024 * 1024) {
-                target.delete();
-                throw new IllegalArgumentException("The selected file is too small to be a GGUF model.");
-            }
-            call.resolve(new JSObject().put("name", name).put("sizeBytes", target.length()));
-        } catch (Exception error) {
-            call.reject("Could not import GGUF model: " + error.getMessage(), "MODEL_IMPORT_FAILED", error);
-        }
+        });
     }
 
     @PluginMethod

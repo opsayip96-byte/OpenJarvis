@@ -3,6 +3,7 @@ import { SUPABASE_ANON_KEY, SUPABASE_URL } from './supabase';
 import { serializeToolCallArguments } from './tool-call';
 import { timeZoneHeaders } from './timezone';
 import { isAndroidNative, JarvisNative } from './android-native';
+import { JarvisNanoNative } from './jarvis-nano-native';
 
 // ---------------------------------------------------------------------------
 // Supabase config
@@ -249,10 +250,30 @@ export async function fetchModels(): Promise<ModelInfo[]> {
       // Fall through to fetch
     }
   }
-  const res = await apiFetch(`/v1/models`);
-  if (!res.ok) throw new Error(`Failed to fetch models: ${res.status}`);
-  const data = await res.json();
-  return data.data || [];
+  let models: ModelInfo[] = [];
+  try {
+    const res = await apiFetch(`/v1/models`);
+    if (res.ok) {
+      const data = await res.json();
+      models = data.data || [];
+    }
+  } catch {
+    // The local Nano model must remain usable without the cloud backend.
+  }
+  if (isAndroidNative()) {
+    try {
+      const status = await JarvisNanoNative.getStatus();
+      if (status.runtimeAvailable) {
+        models = [
+          ...models.filter((model) => !model.id.startsWith('jarvis-nano-v')),
+          { id: 'jarvis-nano-v3', object: 'model', created: 0, owned_by: 'jarvis-local' },
+        ];
+      }
+    } catch {
+      // Older APKs do not have the local Nano plugin.
+    }
+  }
+  return models;
 }
 
 export async function fetchRecommendedModel(): Promise<{ model: string; reason: string }> {

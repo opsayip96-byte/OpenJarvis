@@ -1,6 +1,8 @@
 import type { ResearchEvent, SSEEvent } from '../types';
 import { getBase, authHeaders } from './api';
 import { timeZoneHeaders } from './timezone';
+import { isAndroidNative } from './android-native';
+import { JarvisNanoNative } from './jarvis-nano-native';
 
 export interface ChatRequest {
   model: string;
@@ -16,6 +18,28 @@ export async function* streamChat(
   request: ChatRequest,
   signal?: AbortSignal,
 ): AsyncGenerator<SSEEvent> {
+  if (isAndroidNative() && request.model.startsWith('jarvis-nano-v')) {
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+    const history = request.messages.slice(-8).map((message) =>
+      message.role === 'assistant'
+        ? `[ASSISTANT] ${message.content}\\n`
+        : `[USER] ${message.content}\\n`,
+    ).join('');
+    const prompt = history + '[ASSISTANT]';
+    const result = await JarvisNanoNative.generate({
+      prompt,
+      maxTokens: request.max_tokens ?? 192,
+    });
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+    yield {
+      data: JSON.stringify({ choices: [{ delta: { content: result.text }, finish_reason: null }] }),
+    };
+    yield {
+      data: JSON.stringify({ choices: [{ delta: {}, finish_reason: 'stop' }] }),
+    };
+    return;
+  }
+
   const base = getBase();
   const response = await fetch(`${base}/v1/chat/completions`, {
     method: 'POST',

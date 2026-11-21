@@ -1,5 +1,5 @@
 name: Build JARVIS Android APK
-# Rebuild the latest executive-control and Android native plugin changes.
+# Build standalone APK with the native JARVIS-Nano CPU inference engine.
 
 on:
   workflow_dispatch:
@@ -45,7 +45,8 @@ jobs:
         run: sdkmanager 'ndk;27.2.12479018' 'cmake;3.22.1'
 
       - name: Fetch llama.cpp source
-        run: git clone --depth 1 https://github.com/ggml-org/llama.cpp frontend/android/app/src/main/cpp/llama.cpp
+        run: git clone https://github.com/ggml-org/llama.cpp frontend/android/app/src/main/cpp/llama.cpp
+          git -C frontend/android/app/src/main/cpp/llama.cpp checkout afe77e18fadc2e673c6a6299495a443e17378ce4
 
       - name: Build web assets
         working-directory: frontend

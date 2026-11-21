@@ -49,7 +49,8 @@ jobs:
           sdkmanager --install 'ndk;27.2.12479018' 'cmake;3.22.1'
 
       - name: Fetch llama.cpp source
-        run: git clone https://github.com/ggml-org/llama.cpp frontend/android/app/src/main/cpp/llama.cpp
+        run: |
+          git clone https://github.com/ggml-org/llama.cpp frontend/android/app/src/main/cpp/llama.cpp
           git -C frontend/android/app/src/main/cpp/llama.cpp checkout afe77e18fadc2e673c6a6299495a443e17378ce4
 
       - name: Build web assets

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
 import {
   Activity, Bot, Check, ChevronRight, CircleAlert, Cpu, FileText,
@@ -9,6 +9,7 @@ import { useAppStore } from '../lib/store';
 import { clearIndexedMemory, deleteModel, fetchModels, preloadModel } from '../lib/api';
 import { isAndroidNative, JarvisNative } from '../lib/android-native';
 import { JarvisControlNative } from '../lib/jarvis-control-native';
+import { JarvisNanoNative, type JarvisNanoStatus } from '../lib/jarvis-nano-native';
 
 type Action =
   | { type: 'theme'; value: 'dark' | 'light' | 'system'; label: string }
@@ -134,6 +135,30 @@ export function JarvisControlPage() {
   const [busy, setBusy] = useState(false);
   const [voiceActive, setVoiceActive] = useState(false);
   const [audit, setAudit] = useState<AuditRow[]>(readAudit);
+  const [nanoStatus, setNanoStatus] = useState<JarvisNanoStatus | null>(null);
+  const [nanoBusy, setNanoBusy] = useState(false);
+
+  useEffect(() => {
+    if (!isAndroidNative()) return;
+    JarvisNanoNative.getStatus().then(setNanoStatus).catch(() => setNanoStatus(null));
+  }, []);
+
+  const importNanoModel = async () => {
+    setNanoBusy(true);
+    try {
+      await JarvisNanoNative.importModel();
+      const status = await JarvisNanoNative.getStatus();
+      setNanoStatus(status);
+      const discovered = await fetchModels();
+      useAppStore.getState().setModels(discovered);
+      useAppStore.getState().setSelectedModel('jarvis-nano-v3');
+      toast.success('JARVIS-Nano v3 is loaded and selected.');
+    } catch (error: any) {
+      if (error?.code !== 'IMPORT_CANCELLED') toast.error(error?.message || 'Could not import JARVIS-Nano model.');
+    } finally {
+      setNanoBusy(false);
+    }
+  };
 
   const capabilities = useMemo(() => [
     { icon: Mic, title: 'Voice interface', detail: isAndroidNative() ? 'Android speech recognition and speech output' : 'Voice APIs available in native Android build', active: true },
@@ -342,6 +367,36 @@ export function JarvisControlPage() {
             </div>
           </div>
         </header>
+
+        {isAndroidNative() && (
+          <section className="rounded-2xl p-4 md:p-6" style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <Cpu size={18} style={{ color: 'var(--color-accent)' }} />
+                  <h2 className="text-base font-semibold" style={{ color: 'var(--color-text)' }}>JARVIS-Nano Brain</h2>
+                </div>
+                <p className="mt-1 text-xs" style={{ color: 'var(--color-text-secondary)' }}>
+                  On-device inference using your separately trained v3 checkpoint. Import its GGUF export to activate offline chat.
+                </p>
+              </div>
+              <span className="rounded-full px-3 py-1 text-xs" style={{ background: nanoStatus?.loaded ? 'var(--color-accent-subtle)' : 'var(--color-bg-tertiary)', color: nanoStatus?.loaded ? 'var(--color-success)' : 'var(--color-text-secondary)' }}>
+                {nanoStatus?.loaded ? 'V3 loaded' : nanoStatus?.runtimeAvailable ? 'Model needed' : 'Runtime unavailable'}
+              </span>
+            </div>
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              <button type="button" disabled={nanoBusy || !nanoStatus?.runtimeAvailable} onClick={() => void importNanoModel()} className="min-h-11 rounded-lg px-4 text-sm font-medium disabled:opacity-50" style={{ background: 'var(--color-accent)', color: 'white' }}>
+                {nanoBusy ? 'Importing model...' : nanoStatus?.loaded ? 'Replace / import v3 GGUF' : 'Import JARVIS-Nano v3 GGUF'}
+              </button>
+              <button type="button" onClick={() => navigate('/')} className="min-h-11 rounded-lg px-4 text-sm" style={{ background: 'var(--color-bg-tertiary)', color: 'var(--color-text)' }}>
+                Open AI chat
+              </button>
+            </div>
+            <p className="mt-3 text-[11px]" style={{ color: 'var(--color-text-tertiary)' }}>
+              v1 and v2 checkpoints remain preserved in your training workspace. This importer currently activates v3 only. The GGUF model file is stored privately inside this app's storage.
+            </p>
+          </section>
+        )}
 
         <section className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {capabilities.map((item) => (

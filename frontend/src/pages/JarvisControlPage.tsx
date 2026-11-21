@@ -23,6 +23,12 @@ type Action =
   | { type: 'system-panel'; value: boolean; label: string }
   | { type: 'clear-logs'; label: string }
   | { type: 'clear-agent-events'; label: string }
+  | { type: 'device-status'; label: string }
+  | { type: 'system-panel'; panel: string; label: string }
+  | { type: 'open-url'; url: string; label: string }
+  | { type: 'alarm'; hour: number; minute: number; label: string }
+  | { type: 'timer'; seconds: number; label: string }
+  | { type: 'share-text'; text: string; label: string }
   | { type: 'new-chat'; label: string }
   | { type: 'navigate'; path: string; label: string }
   | { type: 'select-model'; model: string; label: string }
@@ -77,6 +83,23 @@ function parseCommand(raw: string, models: Array<{ id: string }>): Action | null
     return { type: 'clear-logs', label: 'Clear application logs' };
   if (/^(?:clear|delete) agent events$/.test(text))
     return { type: 'clear-agent-events', label: 'Clear agent event history' };
+  if (/^(?:device status|battery status|check device)$/.test(text))
+    return { type: 'device-status', label: 'Read device status' };
+  if ((match = text.match(/^open (wifi|wi-fi|internet|bluetooth|nfc|location|display|sound|battery|app) settings$/)))
+    return { type: 'system-panel', panel: match[1] === 'wi-fi' ? 'wifi' : match[1], label: 'Open Android ' + match[1] + ' settings' };
+  if ((match = text.match(/^open (https?:\/\/\S+)$/)))
+    return { type: 'open-url', url: match[1], label: 'Open website ' + match[1] };
+  if ((match = text.match(/^set alarm (\d{1,2}):(\d{2})$/))) {
+    const hour = Number(match[1]), minute = Number(match[2]);
+    if (hour <= 23 && minute <= 59) return { type: 'alarm', hour, minute, label: 'Set alarm for ' + match[1].padStart(2, '0') + ':' + match[2] };
+  }
+  if ((match = text.match(/^set timer (\d+) (seconds?|minutes?|hours?)$/))) {
+    const amount = Number(match[1]);
+    const seconds = amount * (match[2].startsWith('hour') ? 3600 : match[2].startsWith('minute') ? 60 : 1);
+    if (seconds >= 1 && seconds <= 86400) return { type: 'timer', seconds, label: 'Set timer for ' + match[1] + ' ' + match[2] };
+  }
+  if ((match = text.match(/^share text: ([\s\S]{1,10000})$/)))
+    return { type: 'share-text', text: match[1], label: 'Share supplied text' };
   if (/^(?:new chat|start new chat|create conversation)$/.test(text))
     return { type: 'new-chat', label: 'Start a new conversation' };
   if ((match = text.match(/^open (chat|dashboard|settings|agents|logs|data sources|get started)$/)))
@@ -173,6 +196,32 @@ export function JarvisControlPage() {
         case 'clear-agent-events':
           store.clearAgentEvents();
           break;
+        case 'device-status': {
+          if (!isAndroidNative()) throw new Error('Device status requires the Android APK.');
+          const status = await JarvisControlNative.getDeviceStatus();
+          toast.info(`Battery: ${status.batteryPercent}% · ${status.charging ? 'Charging' : 'Not charging'} · ${status.manufacturer} ${status.model} · Android ${status.androidVersion}`, { duration: 8000 });
+          break;
+        }
+        case 'system-panel':
+          if (!isAndroidNative()) throw new Error('Android settings panels require the installed APK.');
+          await JarvisControlNative.openSystemPanel({ panel: action.panel });
+          break;
+        case 'open-url':
+          if (!isAndroidNative()) throw new Error('Opening external URLs requires the installed APK.');
+          await JarvisControlNative.openWebUrl({ url: action.url });
+          break;
+        case 'alarm':
+          if (!isAndroidNative()) throw new Error('Alarm controls require the installed APK.');
+          await JarvisControlNative.setAlarm({ hour: action.hour, minute: action.minute, message: 'JARVIS alarm' });
+          break;
+        case 'timer':
+          if (!isAndroidNative()) throw new Error('Timer controls require the installed APK.');
+          await JarvisControlNative.setTimer({ seconds: action.seconds, message: 'JARVIS timer' });
+          break;
+        case 'share-text':
+          if (!isAndroidNative()) throw new Error('Android sharing requires the installed APK.');
+          await JarvisControlNative.shareText({ text: action.text });
+          break;
         case 'new-chat':
           store.createConversation(store.selectedModel);
           navigate('/');
@@ -265,6 +314,9 @@ export function JarvisControlPage() {
     'switch model to MODEL_ID', 'open youtube', 'speech off',
     'set font size large', 'deep research on', 'sidebar open',
     'system panel open', 'clear logs', 'clear agent events',
+    'device status', 'open wifi settings', 'open bluetooth settings', 'open location settings',
+    'open display settings', 'open battery settings', 'set alarm 07:30', 'set timer 5 minutes',
+    'open https://example.com', 'share text: Hello from JARVIS',
     'delete current chat', 'clear memory',
   ];
 

@@ -707,7 +707,7 @@ export function InputArea() {
             />
             <button
               onClick={() => void sendMessage()}
-              disabled={streamState.isStreaming || !input.trim() || modelLoading || !selectedModel}
+              disabled={streamState.isStreaming || !input.trim() || modelLoading || (!selectedModel && !(isNativeMemoryAvailable() && /^(save this|memories|show memory|search memory\\s+)/i.test(input.trim())))}
               title={selectedModel ? 'Send message' : 'Pick a model first (⌘K)'}
               className="p-2 rounded-xl transition-colors shrink-0 cursor-pointer disabled:opacity-30 disabled:cursor-default"
               style={{

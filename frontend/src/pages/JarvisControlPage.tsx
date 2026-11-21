@@ -24,7 +24,7 @@ type Action =
   | { type: 'clear-logs'; label: string }
   | { type: 'clear-agent-events'; label: string }
   | { type: 'device-status'; label: string }
-  | { type: 'system-panel'; panel: string; label: string }
+  | { type: 'android-settings'; panel: string; label: string }
   | { type: 'open-url'; url: string; label: string }
   | { type: 'alarm'; hour: number; minute: number; label: string }
   | { type: 'timer'; seconds: number; label: string }
@@ -86,7 +86,7 @@ function parseCommand(raw: string, models: Array<{ id: string }>): Action | null
   if (/^(?:device status|battery status|check device)$/.test(text))
     return { type: 'device-status', label: 'Read device status' };
   if ((match = text.match(/^open (wifi|wi-fi|internet|bluetooth|nfc|location|display|sound|battery|app) settings$/)))
-    return { type: 'system-panel', panel: match[1] === 'wi-fi' ? 'wifi' : match[1], label: 'Open Android ' + match[1] + ' settings' };
+    return { type: 'android-settings', panel: match[1] === 'wi-fi' ? 'wifi' : match[1], label: 'Open Android ' + match[1] + ' settings' };
   if ((match = text.match(/^open (https?:\/\/\S+)$/)))
     return { type: 'open-url', url: match[1], label: 'Open website ' + match[1] };
   if ((match = text.match(/^set alarm (\d{1,2}):(\d{2})$/))) {
@@ -202,7 +202,7 @@ export function JarvisControlPage() {
           toast.info(`Battery: ${status.batteryPercent}% · ${status.charging ? 'Charging' : 'Not charging'} · ${status.manufacturer} ${status.model} · Android ${status.androidVersion}`, { duration: 8000 });
           break;
         }
-        case 'system-panel':
+        case 'android-settings':
           if (!isAndroidNative()) throw new Error('Android settings panels require the installed APK.');
           await JarvisControlNative.openSystemPanel({ panel: action.panel });
           break;

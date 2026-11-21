@@ -39,6 +39,10 @@ jobs:
         working-directory: frontend
         run: npm ci
 
+      - name: Set up Android SDK command-line tools
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools'
       - name: Install native build tools
         run: |
           yes | sdkmanager --licenses >/dev/null || true

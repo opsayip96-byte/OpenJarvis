@@ -97,7 +97,7 @@ public class JarvisControlPlugin extends Plugin {
                 intent = new Intent(Settings.Panel.ACTION_INTERNET_CONNECTIVITY);
                 break;
             case "bluetooth":
-                intent = new Intent(Settings.Panel.ACTION_BLUETOOTH);
+                intent = new Intent(Settings.ACTION_BLUETOOTH_SETTINGS);
                 break;
             case "nfc":
                 intent = new Intent(Settings.ACTION_NFC_SETTINGS);

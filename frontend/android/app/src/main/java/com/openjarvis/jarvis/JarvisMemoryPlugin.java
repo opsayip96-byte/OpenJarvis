@@ -34,13 +34,16 @@ public class JarvisMemoryPlugin extends Plugin {
         ContentValues values = new ContentValues();
         values.put("content", content);
         values.put("category", category.isEmpty() ? "general" : category);
-        values.put("created_at", System.currentTimeMillis());
+        long createdAt = System.currentTimeMillis();
+        values.put("created_at", createdAt);
         long id = db.getWritableDatabase().insert("memories", null, values);
         if (id < 0) {
             call.reject("Could not save this memory.", "MEMORY_SAVE_FAILED");
             return;
         }
-        call.resolve(new JSObject().put("id", id).put("content", content).put("category", category));
+        call.resolve(new JSObject().put("id", id).put("content", content)
+            .put("category", category.isEmpty() ? "general" : category)
+            .put("createdAt", createdAt));
     }
 
     @PluginMethod

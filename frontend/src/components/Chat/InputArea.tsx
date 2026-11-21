@@ -12,6 +12,7 @@ import {
 } from '../../lib/chat-telemetry';
 import { MicButton } from './MicButton';
 import { JarvisMemory, isNativeMemoryAvailable } from '../../lib/android-memory';
+import { JarvisOffline, isJarvisOfflineMode } from '../../lib/android-offline';
 import { useSpeech } from '../../hooks/useSpeech';
 import type {
   ChatMessage,
@@ -244,7 +245,12 @@ export function InputArea() {
       return;
     }
 
-    if (!selectedModel) {
+    if (isJarvisOfflineMode() && deepResearch) {
+      toast.error('Deep Research requires online mode. Switch JARVIS to Online AI to use web and connected-source research.');
+      return;
+    }
+
+    if (!isJarvisOfflineMode() && !selectedModel) {
       toast.error('Pick a model first (⌘K)');
       return;
     }
@@ -338,7 +344,16 @@ export function InputArea() {
     });
 
     try {
-      if (deepResearch) {
+      if (isJarvisOfflineMode()) {
+        const systemPrompt = 'You are JARVIS, a capable, calm, precise personal AI assistant. Be honest about uncertainty and never claim to have used tools you did not use. You are running locally on the user\'s device with no internet access.';
+        const prompt = [systemPrompt, ...apiMessages.map((message) => message.role.toUpperCase() + ': ' + message.content), 'ASSISTANT:'].join('\\n\\n');
+        setStreamState({ phase: 'JARVIS Offline AI is thinking...' });
+        const localResult = await JarvisOffline.generate({ prompt, maxTokens, temperature });
+        accumulatedContent = localResult.text.trim() || 'The offline model returned an empty response.';
+        routedEngine = localResult.engine;
+        setStreamState({ content: accumulatedContent, phase: '' });
+        updateLastAssistant(convId, accumulatedContent);
+      } else if (deepResearch) {
         for await (const ev of streamResearch(
           content,
           selectedModel,

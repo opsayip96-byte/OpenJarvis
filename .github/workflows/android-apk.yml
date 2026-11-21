@@ -39,10 +39,10 @@ jobs:
         working-directory: frontend
         run: npm ci
 
-      - name: Set up Android NDK and CMake
-        uses: android-actions/setup-android@v3
       - name: Install native build tools
-        run: sdkmanager 'ndk;27.2.12479018' 'cmake;3.22.1'
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager --install 'ndk;27.2.12479018' 'cmake;3.22.1'
 
       - name: Fetch llama.cpp source
         run: git clone https://github.com/ggml-org/llama.cpp frontend/android/app/src/main/cpp/llama.cpp

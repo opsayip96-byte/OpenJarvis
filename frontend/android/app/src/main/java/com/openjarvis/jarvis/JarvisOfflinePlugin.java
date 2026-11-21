@@ -26,6 +26,13 @@ public class JarvisOfflinePlugin extends Plugin {
         super.load();
         modelDirectory = new File(getContext().getFilesDir(), "jarvis/models");
         if (!modelDirectory.exists()) modelDirectory.mkdirs();
+        String savedModel = getContext().getSharedPreferences("jarvis_offline_ai", 0).getString("model_name", "");
+        if (!savedModel.isEmpty() && JarvisLlamaEngine.isAvailable()) {
+            File savedFile = new File(modelDirectory, savedModel);
+            if (savedFile.isFile() && savedFile.getParentFile().equals(modelDirectory)) {
+                inferenceExecutor.execute(() -> modelLoaded = JarvisLlamaEngine.nativeLoad(savedFile.getAbsolutePath()));
+            }
+        }
     }
 
     @PluginMethod
@@ -84,7 +91,10 @@ public class JarvisOfflinePlugin extends Plugin {
         inferenceExecutor.execute(() -> {
             boolean loaded = JarvisLlamaEngine.isAvailable() && JarvisLlamaEngine.nativeLoad(model.getAbsolutePath());
             modelLoaded = loaded;
-            if (loaded) call.resolve(new JSObject().put("loaded", true).put("name", name));
+            if (loaded) {
+                getContext().getSharedPreferences("jarvis_offline_ai", 0).edit().putString("model_name", name).apply();
+                call.resolve(new JSObject().put("loaded", true).put("name", name));
+            }
             else call.reject("Offline inference runtime could not load this model. Check the APK native runtime and model compatibility.", "MODEL_LOAD_FAILED");
         });
     }
@@ -111,6 +121,7 @@ public class JarvisOfflinePlugin extends Plugin {
         inferenceExecutor.execute(() -> {
             if (JarvisLlamaEngine.isAvailable()) JarvisLlamaEngine.nativeUnload();
             modelLoaded = false;
+            getContext().getSharedPreferences("jarvis_offline_ai", 0).edit().remove("model_name").apply();
             call.resolve();
         });
     }

@@ -103,7 +103,7 @@ export function InputArea() {
   const modelLoading = useAppStore((s) => s.modelLoading);
   const deepResearch = useAppStore((s) => s.deepResearch);
   const setDeepResearch = useAppStore((s) => s.setDeepResearch);
-  const corpusSync = useResearchCorpusSync(deepResearch);
+  const corpusSync = useResearchCorpusSync(deepResearch && !isJarvisOfflineMode());
   const isCurrentChatStreaming = streamState.isStreaming && streamState.conversationId === activeId;
 
   const {
@@ -721,7 +721,7 @@ export function InputArea() {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder={selectedModel ? 'Message OpenJarvis...' : 'Pick a model first (⌘K)...'}
+          placeholder={isJarvisOfflineMode() ? 'Message JARVIS offline...' : selectedModel ? 'Message JARVIS...' : 'Pick an online model first (⌘K)...'}
           rows={1}
           className="flex-1 bg-transparent outline-none resize-none text-sm leading-relaxed"
           style={{ color: 'var(--color-text)', maxHeight: '200px' }}

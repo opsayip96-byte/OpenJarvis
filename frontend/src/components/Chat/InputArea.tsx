@@ -186,7 +186,7 @@ export function InputArea() {
       : input.trim();
     if (!content || streamState.isStreaming) return;
     if (!selectedModel) {
-      toast.error('Pick a model first (⌘K)');
+      toast.error('Select a model first to chat with JARVIS');
       return;
     }
 
@@ -261,7 +261,7 @@ export function InputArea() {
     });
 
     try {
-      if (deepResearch) {
+      if (deepResearch && !selectedModel.startsWith('jarvis-nano-v')) {
         for await (const ev of streamResearch(
           content,
           selectedModel,

@@ -606,16 +606,16 @@ export function InputArea() {
       };
       // Check if the response has digest audio available
       let audioMeta: { url: string } | undefined;
-      try {
-        const digestRes = await fetch(`${getBase()}/api/digest`, { headers: authHeaders() });
-        if (digestRes.ok) {
-          const digest = await digestRes.json();
-          if (digest.audio_available) {
-            audioMeta = { url: `${getBase()}/api/digest/audio` };
+      if (!isJarvisOfflineMode()) {
+        try {
+          const digestRes = await fetch(`${getBase()}/api/digest`, { headers: authHeaders() });
+          if (digestRes.ok) {
+            const digest = await digestRes.json();
+            if (digest.audio_available) audioMeta = { url: `${getBase()}/api/digest/audio` };
           }
+        } catch {
+          // Online-only digest lookup. Offline mode must make no network requests.
         }
-      } catch {
-        // Not a digest response or server unavailable — skip
       }
 
       updateLastAssistant(
@@ -643,7 +643,7 @@ export function InputArea() {
       // `done` event's usage payload — re-fetching here would overwrite
       // it with a potentially stale snapshot if the server's research
       // telemetry hasn't been merged into /v1/savings yet.
-      if (!deepResearch) {
+      if (!deepResearch && !isJarvisOfflineMode()) {
         fetchSavings()
           .then((data) => useAppStore.getState().setSavings(data))
           .catch(() => {});

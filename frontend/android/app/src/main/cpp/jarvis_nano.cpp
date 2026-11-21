@@ -25,6 +25,7 @@ Java_com_openjarvis_jarvis_JarvisNanoPlugin_nativeLoadModel(JNIEnv *env, jclass,
     const char *path = env->GetStringUTFChars(pathValue, nullptr);
     std::lock_guard<std::mutex> lock(g_mutex);
     unload_locked();
+    llama_backend_init();
     auto model_params = llama_model_default_params();
     model_params.n_gpu_layers = 0;
     g_model = llama_model_load_from_file(path, model_params);

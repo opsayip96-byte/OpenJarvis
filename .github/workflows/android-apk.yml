@@ -1,4 +1,5 @@
 name: Build JARVIS Android APK
+# Rebuild the latest executive-control and Android native plugin changes.
 
 on:
   workflow_dispatch:

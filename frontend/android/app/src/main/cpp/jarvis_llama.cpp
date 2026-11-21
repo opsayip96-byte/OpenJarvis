@@ -21,6 +21,33 @@ void releaseLocked() {
     vocab = nullptr;
 }
 
+jstring toJavaString(JNIEnv * env, const std::string & text) {
+    std::vector<jchar> utf16;
+    for (size_t i = 0; i < text.size();) {
+        const unsigned char first = static_cast<unsigned char>(text[i++]);
+        uint32_t codepoint = 0xFFFD;
+        size_t continuation = 0;
+        if (first < 0x80) { codepoint = first; continuation = 0; }
+        else if ((first & 0xE0) == 0xC0) { codepoint = first & 0x1F; continuation = 1; }
+        else if ((first & 0xF0) == 0xE0) { codepoint = first & 0x0F; continuation = 2; }
+        else if ((first & 0xF8) == 0xF0) { codepoint = first & 0x07; continuation = 3; }
+        bool valid = i + continuation <= text.size();
+        for (size_t j = 0; valid && j < continuation; ++j) {
+            const unsigned char next = static_cast<unsigned char>(text[i++]);
+            if ((next & 0xC0) != 0x80) { valid = false; break; }
+            codepoint = (codepoint << 6) | (next & 0x3F);
+        }
+        if (!valid || codepoint > 0x10FFFF || (codepoint >= 0xD800 && codepoint <= 0xDFFF)) codepoint = 0xFFFD;
+        if (codepoint <= 0xFFFF) utf16.push_back(static_cast<jchar>(codepoint));
+        else {
+            codepoint -= 0x10000;
+            utf16.push_back(static_cast<jchar>(0xD800 + (codepoint >> 10)));
+            utf16.push_back(static_cast<jchar>(0xDC00 + (codepoint & 0x3FF)));
+        }
+    }
+    return env->NewString(utf16.empty() ? nullptr : utf16.data(), static_cast<jsize>(utf16.size()));
+}
+
 std::vector<llama_token> tokenize(const std::string & text, bool addBos) {
     int32_t capacity = std::max<int32_t>(256, static_cast<int32_t>(text.size() / 2 + 16));
     std::vector<llama_token> tokens(capacity);
@@ -111,7 +138,7 @@ Java_com_openjarvis_jarvis_JarvisLlamaEngine_nativeGenerate(JNIEnv * env, jclass
         if (llama_decode(context, batch) != 0) break;
     }
     llama_sampler_free(sampler);
-    return env->NewStringUTF(output.c_str());
+    return toJavaString(env, output);
 }
 
 extern "C" JNIEXPORT void JNICALL

@@ -10,6 +10,7 @@
 
 namespace {
 std::mutex engineMutex;
+bool backendInitialized = false;
 llama_model * model = nullptr;
 llama_context * context = nullptr;
 const llama_vocab * vocab = nullptr;
@@ -43,7 +44,7 @@ Java_com_openjarvis_jarvis_JarvisLlamaEngine_nativeLoad(JNIEnv * env, jclass, js
     if (!raw) return JNI_FALSE;
     std::lock_guard<std::mutex> lock(engineMutex);
     releaseLocked();
-    llama_backend_init();
+    if (!backendInitialized) { llama_backend_init(); backendInitialized = true; }
     auto params = llama_model_default_params();
     params.n_gpu_layers = 0;
     model = llama_model_load_from_file(raw, params);
@@ -72,6 +73,19 @@ Java_com_openjarvis_jarvis_JarvisLlamaEngine_nativeGenerate(JNIEnv * env, jclass
     std::lock_guard<std::mutex> lock(engineMutex);
     if (!model || !context || !vocab) return env->NewStringUTF("JARVIS offline model is not loaded.");
     llama_memory_clear(llama_get_memory(context), true);
+    const char * chatTemplate = llama_model_chat_template(model, nullptr);
+    if (chatTemplate) {
+        llama_chat_message message = {"user", prompt.c_str()};
+        std::vector<char> formatted(std::max<size_t>(4096, prompt.size() * 4 + 1024));
+        int32_t formattedSize = llama_chat_apply_template(chatTemplate, &message, 1, true, formatted.data(), static_cast<int32_t>(formatted.size()));
+        if (formattedSize > 0) {
+            if (static_cast<size_t>(formattedSize) >= formatted.size()) {
+                formatted.resize(static_cast<size_t>(formattedSize) + 1);
+                formattedSize = llama_chat_apply_template(chatTemplate, &message, 1, true, formatted.data(), static_cast<int32_t>(formatted.size()));
+            }
+            if (formattedSize > 0 && static_cast<size_t>(formattedSize) <= formatted.size()) prompt.assign(formatted.data(), static_cast<size_t>(formattedSize));
+        }
+    }
     auto input = tokenize(prompt, true);
     if (input.empty() || input.size() >= llama_n_ctx(context)) return env->NewStringUTF("Prompt is empty or exceeds the offline context window.");
 

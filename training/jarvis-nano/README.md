@@ -52,4 +52,4 @@ Only train on material you have permission to use. Remove personal data, credent
 
 ## Current status
 
-This is the reproducible training pipeline and architecture definition. It is **not** a trained or downloadable model checkpoint yet. The weights must be trained on a GPU using a sufficiently large licensed corpus, converted to GGUF, and tested on the target Android phone.
+The training script now accepts plain-text documents and chat-style JSONL (`messages` with `role`/`content`), preserves role markers, adds document boundaries, and automatically selects BF16/FP16 on supported CUDA devices. CPU mode is available for smoke tests but is not practical for the default model. This is still a reproducible training pipeline and architecture definition, **not** a trained or downloadable model checkpoint. The weights must be trained on a GPU using a sufficiently large licensed corpus, converted to GGUF, and tested on the target Android phone.

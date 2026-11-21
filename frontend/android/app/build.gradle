@@ -1,6 +1,7 @@
 apply plugin: 'com.android.application'
 
 android {
+    ndkVersion "27.2.12479018"
     namespace "com.openjarvis.jarvis"
     compileSdk rootProject.ext.compileSdkVersion
     defaultConfig {
@@ -9,7 +10,6 @@ android {
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
         versionName "1.0"
-        ndkVersion "27.2.12479018"
         externalNativeBuild { cmake { cppFlags "-std=c++17" } }
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {

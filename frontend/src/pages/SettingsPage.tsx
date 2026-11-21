@@ -41,6 +41,7 @@ import {
 import { isAndroidNative, JarvisNative, type AndroidVoice } from '../lib/android-native';
 import { isAutoUpdateDisabled, setAutoUpdateDisabled } from '../components/Desktop/UpdateChecker';
 import { apiFetch } from '../lib/api';
+import { JarvisOffline, isJarvisOfflineAvailable, type OfflineStatus } from '../lib/android-offline';
 
 const CLOUD_KEY_STATUS_CHANGED = 'openjarvis-cloud-key-status-changed';
 
@@ -392,6 +393,91 @@ function PersonalMemoryManager() {
       </div>
       {error && <p role="alert" className="text-xs mt-2" style={{ color: 'var(--color-error)' }}>{error}</p>}
     </div>
+  );
+}
+
+
+function OfflineAIControls() {
+  const [status, setStatus] = useState<OfflineStatus | null>(null);
+  const [mode, setMode] = useState(() => {
+    try { return localStorage.getItem('jarvis-ai-mode') || 'online'; } catch { return 'online'; }
+  });
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState('');
+
+  const refresh = useCallback(async () => {
+    try { setStatus(await JarvisOffline.status()); }
+    catch (error) { setMessage(error instanceof Error ? error.message : 'Could not inspect offline engine.'); }
+  }, []);
+  useEffect(() => { if (isJarvisOfflineAvailable()) void refresh(); }, [refresh]);
+
+  const importModel = async () => {
+    setBusy(true); setMessage('');
+    try {
+      const model = await JarvisOffline.importModel();
+      setMessage('Imported ' + model.name + ' (' + (model.sizeBytes / 1e9).toFixed(2) + ' GB). Loading it now…');
+      await JarvisOffline.loadModel({ name: model.name });
+      await refresh();
+      setMessage('Offline model loaded. You can now switch JARVIS to Offline AI.');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Model import failed.');
+    } finally { setBusy(false); }
+  };
+
+  const loadModel = async (name: string) => {
+    setBusy(true); setMessage('');
+    try {
+      await JarvisOffline.loadModel({ name });
+      await refresh();
+      setMessage('Offline model loaded successfully.');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Model loading failed.');
+    } finally { setBusy(false); }
+  };
+
+  const chooseMode = (next: string) => {
+    if (next === 'offline' && !status?.modelLoaded) {
+      setMessage('Import and load a GGUF model before enabling Offline AI.');
+      return;
+    }
+    setMode(next);
+    try { localStorage.setItem('jarvis-ai-mode', next); } catch {}
+    setMessage(next === 'offline' ? 'Offline AI selected. Chat stays on this phone.' : 'Online AI selected. JARVIS will use the configured online backend.');
+  };
+
+  if (!isJarvisOfflineAvailable()) return null;
+  return (
+    <Section title="JARVIS AI Engine">
+      <SettingRow label="AI mode" description="Offline runs a GGUF model on this phone. Online uses the configured backend and provider.">
+        <select value={mode} onChange={(event) => chooseMode(event.target.value)} className="text-xs px-2 py-1.5 rounded-lg"
+          style={{ background: 'var(--color-bg-secondary)', color: 'var(--color-text)', border: '1px solid var(--color-border)' }}>
+          <option value="online">Online AI</option>
+          <option value="offline">Offline AI</option>
+        </select>
+      </SettingRow>
+      <SettingRow label="Local inference runtime" description={status?.runtimeAvailable ? 'llama.cpp native runtime detected' : 'Native runtime is not available in this build'}>
+        <span className="text-xs" style={{ color: status?.runtimeAvailable ? 'var(--color-success)' : 'var(--color-error)' }}>
+          {status ? (status.runtimeAvailable ? 'Available' : 'Unavailable') : 'Checking…'}
+        </span>
+      </SettingRow>
+      <SettingRow label="GGUF model" description={status?.modelLoaded ? 'A model is loaded in memory' : 'Import a compatible GGUF model from phone storage'}>
+        <button type="button" disabled={busy || !status?.runtimeAvailable} onClick={() => void importModel()}
+          className="px-3 py-1.5 rounded-lg text-xs disabled:opacity-40"
+          style={{ background: 'var(--color-accent)', color: 'white' }}>
+          {busy ? 'Working…' : 'Import model'}
+        </button>
+      </SettingRow>
+      {status?.models?.map((model) => (
+        <SettingRow key={model.name} label={model.name} description={(model.sizeBytes / 1e9).toFixed(2) + ' GB'}>
+          <button type="button" disabled={busy || status.modelLoaded} onClick={() => void loadModel(model.name)}
+            className="text-xs disabled:opacity-40" style={{ color: 'var(--color-accent)' }}>Load</button>
+        </SettingRow>
+      ))}
+      <p className="text-xs mt-2" style={{ color: 'var(--color-text-tertiary)' }}>
+        Model files are copied into JARVIS private app storage. Large models need substantial free storage and RAM. Start with a small 1B to 3B Q4 GGUF model on an 8 GB phone.
+      </p>
+      {message && <p role="status" className="text-xs mt-2 break-words" style={{ color: 'var(--color-text-secondary)' }}>{message}</p>}
+    </Section>
   );
 }
 
@@ -1298,6 +1384,8 @@ export function SettingsPage() {
               </div>
             )}
           </Section>
+
+          {androidApp && <OfflineAIControls />}
 
           {/* Data */}
           <Section title="Data">

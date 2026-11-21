@@ -17,6 +17,12 @@ type Action =
   | { type: 'speech'; value: boolean; label: string }
   | { type: 'temperature'; value: number; label: string }
   | { type: 'max-tokens'; value: number; label: string }
+  | { type: 'font-size'; value: 'small' | 'default' | 'large'; label: string }
+  | { type: 'deep-research'; value: boolean; label: string }
+  | { type: 'sidebar'; value: boolean; label: string }
+  | { type: 'system-panel'; value: boolean; label: string }
+  | { type: 'clear-logs'; label: string }
+  | { type: 'clear-agent-events'; label: string }
   | { type: 'new-chat'; label: string }
   | { type: 'navigate'; path: string; label: string }
   | { type: 'select-model'; model: string; label: string }
@@ -30,7 +36,7 @@ type AuditRow = { at: number; label: string; result: 'done' | 'denied' | 'failed
 const AUDIT_KEY = 'jarvis-control-audit-v1';
 const ROUTES: Record<string, string> = {
   chat: '/', dashboard: '/dashboard', settings: '/settings',
-  agents: '/agents', logs: '/logs', 'data sources': '/data-sources',
+  agents: '/agents', logs: '/logs', 'data sources': '/data-sources', 'get started': '/get-started',
 };
 const KNOWN_APPS = ['youtube', 'chrome', 'maps', 'whatsapp', 'instagram', 'gmail'];
 
@@ -59,9 +65,21 @@ function parseCommand(raw: string, models: Array<{ id: string }>): Action | null
     const value = Math.min(16384, Math.max(128, Number(match[1])));
     return { type: 'max-tokens', value, label: 'Set maximum response tokens to ' + value };
   }
+  if ((match = text.match(/^set font size(?: to)? (small|default|large)$/)))
+    return { type: 'font-size', value: match[1] as 'small' | 'default' | 'large', label: 'Set font size to ' + match[1] };
+  if ((match = text.match(/^deep research (on|off)$/)))
+    return { type: 'deep-research', value: match[1] === 'on', label: (match[1] === 'on' ? 'Enable' : 'Disable') + ' deep research' };
+  if ((match = text.match(/^sidebar (open|close)$/)))
+    return { type: 'sidebar', value: match[1] === 'open', label: (match[1] === 'open' ? 'Open' : 'Close') + ' sidebar' };
+  if ((match = text.match(/^system panel (open|close)$/)))
+    return { type: 'system-panel', value: match[1] === 'open', label: (match[1] === 'open' ? 'Open' : 'Close') + ' system panel' };
+  if (/^(?:clear|delete) (?:the )?logs$/.test(text))
+    return { type: 'clear-logs', label: 'Clear application logs' };
+  if (/^(?:clear|delete) agent events$/.test(text))
+    return { type: 'clear-agent-events', label: 'Clear agent event history' };
   if (/^(?:new chat|start new chat|create conversation)$/.test(text))
     return { type: 'new-chat', label: 'Start a new conversation' };
-  if ((match = text.match(/^open (chat|dashboard|settings|agents|logs|data sources)$/)))
+  if ((match = text.match(/^open (chat|dashboard|settings|agents|logs|data sources|get started)$/)))
     return { type: 'navigate', path: ROUTES[match[1]], label: 'Open ' + match[1] };
   if ((match = text.match(/^switch model(?: to)? (.+)$/))) {
     const model = models.find((item) => item.id.toLowerCase() === match![1].trim());
@@ -135,6 +153,24 @@ export function JarvisControlPage() {
           break;
         case 'max-tokens':
           store.updateSettings({ maxTokens: action.value });
+          break;
+        case 'font-size':
+          store.updateSettings({ fontSize: action.value });
+          break;
+        case 'deep-research':
+          store.setDeepResearch(action.value);
+          break;
+        case 'sidebar':
+          store.setSidebarOpen(action.value);
+          break;
+        case 'system-panel':
+          store.setSystemPanelOpen(action.value);
+          break;
+        case 'clear-logs':
+          store.clearLogs();
+          break;
+        case 'clear-agent-events':
+          store.clearAgentEvents();
           break;
         case 'new-chat':
           store.createConversation(store.selectedModel);
@@ -224,7 +260,10 @@ export function JarvisControlPage() {
   const examples = [
     'set theme dark', 'voice output on', 'voice autoplay off',
     'set temperature 0.5', 'set max tokens 2048', 'new chat',
-    'open agents', 'switch model to MODEL_ID', 'open youtube',
+    'open agents', 'open dashboard', 'open data sources', 'open get started',
+    'switch model to MODEL_ID', 'open youtube', 'speech off',
+    'set font size large', 'deep research on', 'sidebar open',
+    'system panel open', 'clear logs', 'clear agent events',
     'delete current chat', 'clear memory',
   ];
 
@@ -324,6 +363,9 @@ export function JarvisControlPage() {
               <div className="flex justify-between"><span>Voice output</span><span style={{ color: 'var(--color-text)' }}>{settings.voiceOutputEnabled ? 'On' : 'Off'}</span></div>
               <div className="flex justify-between"><span>Voice autoplay</span><span style={{ color: 'var(--color-text)' }}>{settings.voiceAutoplay ? 'On' : 'Off'}</span></div>
               <div className="flex justify-between"><span>Temperature</span><span style={{ color: 'var(--color-text)' }}>{settings.temperature}</span></div>
+              <div className="flex justify-between"><span>Maximum tokens</span><span style={{ color: 'var(--color-text)' }}>{settings.maxTokens}</span></div>
+              <div className="flex justify-between"><span>Font size</span><span style={{ color: 'var(--color-text)' }}>{settings.fontSize}</span></div>
+              <div className="flex justify-between"><span>Deep research</span><span style={{ color: 'var(--color-text)' }}>{useAppStore.getState().deepResearch ? 'On' : 'Off'}</span></div>
             </div>
             <button type="button" onClick={() => navigate('/settings')} className="mt-4 inline-flex min-h-10 items-center gap-1 text-xs" style={{ color: 'var(--color-accent)' }}>Advanced settings <ChevronRight size={14} /></button>
           </div>

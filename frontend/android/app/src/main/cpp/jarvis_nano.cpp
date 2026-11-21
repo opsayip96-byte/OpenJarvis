@@ -37,7 +37,7 @@ Java_com_openjarvis_jarvis_JarvisNanoPlugin_nativeLoadModel(JNIEnv *env, jclass,
     if (!g_model) { LOGE("Model load failed"); return JNI_FALSE; }
     auto ctx_params = llama_context_default_params();
     ctx_params.n_ctx = 1024;
-    ctx_params.n_batch = 512;
+    ctx_params.n_batch = 1024;
     ctx_params.n_threads = 4;
     ctx_params.n_threads_batch = 4;
     g_ctx = llama_init_from_model(g_model, ctx_params);

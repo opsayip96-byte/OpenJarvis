@@ -1,5 +1,5 @@
 name: Build JARVIS Android APK
-# Build standalone APK with the native JARVIS-Nano CPU inference engine.
+# Build standalone APK with the native JARVIS-Nano CPU inference engine. Latest build includes the corrected llama.cpp checkout.
 
 on:
   workflow_dispatch:

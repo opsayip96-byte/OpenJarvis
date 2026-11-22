@@ -41,6 +41,7 @@ import {
 import { isAndroidNative, JarvisNative, type AndroidVoice } from '../lib/android-native';
 import { isAutoUpdateDisabled, setAutoUpdateDisabled } from '../components/Desktop/UpdateChecker';
 import { apiFetch } from '../lib/api';
+import { NeedleLocalSection } from '../components/settings/NeedleLocalSection';
 
 const CLOUD_KEY_STATUS_CHANGED = 'openjarvis-cloud-key-status-changed';
 
@@ -872,6 +873,11 @@ export function SettingsPage() {
                 <CloudProviderStatus label="Atlas Cloud" keyName="ATLASCLOUD_API_KEY" />
               </div>
             </SettingRow>
+          </Section>
+
+          {/* Needle 3 local inference */}
+          <Section title="Needle 3 Local Brain">
+            <NeedleLocalSection />
           </Section>
 
           {/* API Keys */}

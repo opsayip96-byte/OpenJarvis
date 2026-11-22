@@ -47,6 +47,8 @@ jobs:
 
       - name: Install Android SDK, NDK and CMake
         uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
 
       - name: Install Android build packages
         run: |

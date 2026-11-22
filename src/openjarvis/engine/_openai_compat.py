@@ -27,6 +27,25 @@ from openjarvis.intelligence.model_catalog import resolve_model_id_for_engine
 logger = logging.getLogger(__name__)
 
 
+def _messages_for_openai(messages: Sequence[Message]) -> List[Dict[str, Any]]:
+    """Convert core messages to OpenAI chat format, including vision images."""
+    payload = messages_to_dicts(messages)
+    for item in payload:
+        images = item.pop("images", None)
+        if images:
+            text = item.get("content") or ""
+            content: List[Dict[str, Any]] = [{"type": "text", "text": text}]
+            content.extend(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/jpeg;base64,{image}"},
+                }
+                for image in images
+            )
+            item["content"] = content
+    return payload
+
+
 class _OpenAICompatibleEngine(AsyncHTTPEngineMixin, InferenceEngine):
     """Base for engines that serve the OpenAI ``/v1/chat/completions`` API."""
 
@@ -90,7 +109,7 @@ class _OpenAICompatibleEngine(AsyncHTTPEngineMixin, InferenceEngine):
     ) -> Dict[str, Any]:
         payload: Dict[str, Any] = {
             "model": self._resolve_model_id(model),
-            "messages": messages_to_dicts(messages),
+            "messages": _messages_for_openai(messages),
             "temperature": temperature,
             "max_tokens": max_tokens,
             "stream": False,
@@ -182,7 +201,7 @@ class _OpenAICompatibleEngine(AsyncHTTPEngineMixin, InferenceEngine):
     ) -> AsyncIterator[str]:
         payload: Dict[str, Any] = {
             "model": self._resolve_model_id(model),
-            "messages": messages_to_dicts(messages),
+            "messages": _messages_for_openai(messages),
             "temperature": temperature,
             "max_tokens": max_tokens,
             "stream": True,
@@ -243,7 +262,7 @@ class _OpenAICompatibleEngine(AsyncHTTPEngineMixin, InferenceEngine):
         **kwargs: Any,
     ) -> AsyncIterator["StreamChunk"]:
         """Yield StreamChunks with content, tool_calls, and finish_reason."""
-        msg_dicts = messages_to_dicts(messages)
+        msg_dicts = _messages_for_openai(messages)
         payload: Dict[str, Any] = {
             "model": self._resolve_model_id(model),
             "messages": msg_dicts,

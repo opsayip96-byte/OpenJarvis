@@ -7,6 +7,7 @@ import { fetchSavings, getBase, authHeaders, isMemoryContextEnabled } from '../.
 import { listConnectors, getSyncStatus } from '../../lib/connectors-api';
 import { serializeToolCallArguments } from '../../lib/tool-call';
 import { NeedleNative } from '../../lib/needle-native';
+import { isAndroidNative, JarvisNative } from '../../lib/android-native';
 import {
   engineFromCompletionChunk,
   resolveChatEngine,
@@ -595,6 +596,34 @@ export function InputArea() {
   ]);
 
   sendRecognizedSpeechRef.current = (text) => sendMessage(text);
+
+  // When the user has explicitly started the microphone, accept a spoken
+  // "Hello JARVIS" wake phrase and submit the words that follow it. This is
+  // foreground, tap-to-enable listening, not an always-on background mic.
+  useEffect(() => {
+    if (!isAndroidNative()) return;
+    let active = true;
+    let listener: { remove: () => Promise<void> } | null = null;
+    JarvisNative.addListener('speechResult', ({ text }) => {
+      if (!active || !text) return;
+      const match = text.match(/^(?:hello|hey)\\s+jarvis\\b[,.! ]*/i);
+      if (!match) return;
+      const command = text.slice(match[0].length).trim() || 'Hello';
+      void (async () => {
+        await cancelRecording();
+        await sendRecognizedSpeechRef.current(command);
+      })();
+    }).then((handle) => {
+      if (active) listener = handle;
+      else void handle.remove();
+    }).catch((error) => {
+      console.warn('JARVIS wake phrase listener could not start:', error);
+    });
+    return () => {
+      active = false;
+      if (listener) void listener.remove();
+    };
+  }, [cancelRecording]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {

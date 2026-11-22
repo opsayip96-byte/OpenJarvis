@@ -23,6 +23,85 @@ import type {
   ToolCallInfo,
 } from '../../types';
 
+const MAX_MEDIA_FILE_BYTES = 25 * 1024 * 1024;
+const MAX_MEDIA_EDGE = 1280;
+
+function canvasToJpegBase64(canvas: HTMLCanvasElement): string {
+  return canvas.toDataURL('image/jpeg', 0.82).split(',')[1] ?? '';
+}
+
+async function captureVideoFrames(file: File): Promise<string[]> {
+  const url = URL.createObjectURL(file);
+  const video = document.createElement('video');
+  video.preload = 'metadata';
+  video.muted = true;
+  video.playsInline = true;
+  video.src = url;
+  try {
+    await new Promise<void>((resolve, reject) => {
+      video.onloadedmetadata = () => resolve();
+      video.onerror = () => reject(new Error(`Could not read video: ${file.name}`));
+      video.load();
+    });
+    const duration = Number.isFinite(video.duration) ? video.duration : 0;
+    if (duration <= 0) throw new Error(`Video has no readable duration: ${file.name}`);
+    const times = [...new Set([0, duration / 2, Math.max(0, duration - 0.15)])];
+    const frames: string[] = [];
+    for (const time of times) {
+      if (Math.abs(video.currentTime - time) > 0.02) {
+        await new Promise<void>((resolve, reject) => {
+          video.onseeked = () => resolve();
+          video.onerror = () => reject(new Error(`Could not read a frame from ${file.name}`));
+          video.currentTime = time;
+        });
+      }
+      const scale = Math.min(1, MAX_MEDIA_EDGE / Math.max(video.videoWidth, video.videoHeight));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
+      canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
+      const context = canvas.getContext('2d');
+      if (!context) throw new Error('This device cannot process video frames.');
+      context.drawImage(video, 0, 0, canvas.width, canvas.height);
+      frames.push(canvasToJpegBase64(canvas));
+    }
+    return frames;
+  } finally {
+    video.pause();
+    video.removeAttribute('src');
+    video.load();
+    URL.revokeObjectURL(url);
+  }
+}
+
+async function prepareMediaImages(files: File[]): Promise<string[]> {
+  const payloads: string[] = [];
+  for (const file of files) {
+    if (file.size > MAX_MEDIA_FILE_BYTES) {
+      throw new Error(`${file.name} is larger than 25 MB. Choose a smaller file.`);
+    }
+    if (file.type.startsWith('image/')) {
+      const bitmap = await createImageBitmap(file);
+      try {
+        const scale = Math.min(1, MAX_MEDIA_EDGE / Math.max(bitmap.width, bitmap.height));
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+        canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+        const context = canvas.getContext('2d');
+        if (!context) throw new Error('This device cannot process the selected photo.');
+        context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+        payloads.push(canvasToJpegBase64(canvas));
+      } finally {
+        bitmap.close();
+      }
+    } else if (file.type.startsWith('video/')) {
+      payloads.push(...await captureVideoFrames(file));
+    } else {
+      throw new Error(`Unsupported file type: ${file.name}. Choose a photo or video.`);
+    }
+  }
+  return payloads;
+}
+
 // While Deep Research is toggled on, poll connected sources for sync
 // progress so we can surface "Searching over N items — sync in progress"
 // next to the toggle. Polling is gated on `enabled` so toggling DR off
@@ -83,6 +162,8 @@ function useResearchCorpusSync(enabled: boolean): {
 
 export function InputArea() {
   const [input, setInput] = useState('');
+  const [attachments, setAttachments] = useState<File[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -183,16 +264,32 @@ export function InputArea() {
   }, [resetStream]);
 
   const sendMessage = useCallback(async (recognizedText?: string) => {
-    const content = recognizedText
+    const filesToSend = attachments;
+    const textContent = recognizedText
       ? [input.trim(), recognizedText.trim()].filter(Boolean).join(' ')
       : input.trim();
-    if (!content || streamState.isStreaming) return;
+    const content = textContent || (filesToSend.length ? 'Please analyze the attached media.' : '');
+    if ((!content && filesToSend.length === 0) || streamState.isStreaming) return;
     if (!selectedModel) {
       toast.error('Pick a model first (⌘K)');
       return;
     }
+    if (selectedModel === 'needle3-local' && filesToSend.length > 0) {
+      toast.error('Needle 3 currently handles text only. Select a vision-capable model to analyze photos or videos.');
+      return;
+    }
 
+    let mediaImages: string[] = [];
+    if (filesToSend.length > 0) {
+      try {
+        mediaImages = await prepareMediaImages(filesToSend);
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Could not process the selected media.');
+        return;
+      }
+    }
     setInput('');
+    setAttachments([]);
 
     let convId = activeId;
     if (!convId) {
@@ -202,17 +299,25 @@ export function InputArea() {
     const userMsg: ChatMessage = {
       id: generateId(),
       role: 'user',
-      content,
+      content: filesToSend.length
+        ? `${content}\n\n[Attached media: ${filesToSend.map((file) => file.name).join(', ')}]`
+        : content,
       timestamp: Date.now(),
     };
     addMessage(convId, userMsg);
 
-    // Build API messages before adding assistant placeholder
+    // Keep binary media out of local conversation storage. Attach the
+    // processed frames only to this request payload.
     const currentMessages = useAppStore.getState().messages;
     const apiMessages = currentMessages.map((m) => ({
       role: m.role,
       content: m.content,
+      ...(m.images?.length ? { images: m.images } : {}),
     }));
+    if (mediaImages.length > 0) {
+      const lastUserIndex = apiMessages.map((m) => m.role).lastIndexOf('user');
+      if (lastUserIndex >= 0) apiMessages[lastUserIndex].images = mediaImages;
+    }
 
     const assistantMsg: ChatMessage = {
       id: generateId(),
@@ -582,6 +687,7 @@ export function InputArea() {
     }
   }, [
     input,
+    attachments,
     activeId,
     selectedModel,
     streamState.isStreaming,
@@ -674,6 +780,29 @@ export function InputArea() {
           boxShadow: 'var(--shadow-sm)',
         }}
       >
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*,video/*"
+          multiple
+          className="hidden"
+          onChange={(event) => {
+            const selected = Array.from(event.target.files ?? []);
+            if (selected.length) setAttachments((current) => [...current, ...selected].slice(0, 5));
+            event.target.value = '';
+          }}
+        />
+        <button
+          type="button"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={streamState.isStreaming || modelLoading || attachments.length >= 5}
+          className="p-2 rounded-xl shrink-0 disabled:opacity-30"
+          style={{ color: 'var(--color-text-secondary)' }}
+          title="Attach photos or videos"
+          aria-label="Attach photos or videos"
+        >
+          <Paperclip size={16} />
+        </button>
         <textarea
           ref={textareaRef}
           value={input}
@@ -685,6 +814,16 @@ export function InputArea() {
           style={{ color: 'var(--color-text)', maxHeight: '200px' }}
           disabled={streamState.isStreaming || modelLoading}
         />
+        {attachments.length > 0 && (
+          <div className="flex flex-wrap gap-1 px-1 pb-1">
+            {attachments.map((file, index) => (
+              <span key={`${file.name}-${index}`} className="inline-flex max-w-full items-center gap-1 rounded-lg px-2 py-1 text-[11px]" style={{ background: 'var(--color-bg-tertiary)', color: 'var(--color-text-secondary)' }}>
+                <span className="max-w-40 truncate">{file.name}</span>
+                <button type="button" onClick={() => setAttachments((current) => current.filter((_, i) => i !== index))} aria-label={`Remove ${file.name}`} title="Remove attachment">×</button>
+              </span>
+            ))}
+          </div>
+        )}
         {isCurrentChatStreaming ? (
           <button
             onClick={stopStreaming}
@@ -705,7 +844,7 @@ export function InputArea() {
             />
             <button
               onClick={() => void sendMessage()}
-              disabled={streamState.isStreaming || !input.trim() || modelLoading || !selectedModel}
+              disabled={streamState.isStreaming || (!input.trim() && attachments.length === 0) || modelLoading || !selectedModel}
               title={selectedModel ? 'Send message' : 'Pick a model first (⌘K)'}
               className="p-2 rounded-xl transition-colors shrink-0 cursor-pointer disabled:opacity-30 disabled:cursor-default"
               style={{

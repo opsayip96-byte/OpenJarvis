@@ -5,10 +5,12 @@ on:
     branches: [main, "codex/**", "jarvis-android-build"]
     paths:
       - "frontend/**"
+      - "src/openjarvis/**"
       - ".github/workflows/android-build.yml"
   pull_request:
     paths:
       - "frontend/**"
+      - "src/openjarvis/**"
       - ".github/workflows/android-build.yml"
   workflow_dispatch:
 

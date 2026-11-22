@@ -411,7 +411,39 @@ export function InputArea() {
 
     const isNeedleLocal = selectedModel === 'needle3-local';
 
+    let needleActionResponse: string | null = null;
     try {
+      // On Android, Needle is the first-stage router even when a separate
+      // chat model is selected. The selected model is only called after
+      // Needle has inspected the request and returned no local action.
+      if (!isNeedleLocal && isAndroidNative()) {
+        setStreamState({ phase: 'Needle 3 analysing locally...' });
+        const needleStatus = await NeedleNative.getStatus();
+        if (!needleStatus.nativeAvailable || !needleStatus.modelDownloaded) {
+          throw new Error('Needle 3 routing is not ready. Install the Needle-enabled JARVIS build and download the local Needle model in Settings.');
+        }
+        const routingInput = apiMessages
+          .slice(-16)
+          .map((message) => `${message.role.toUpperCase()}: ${message.content}`)
+          .join('\\n\\n');
+        const routed = await NeedleNative.complete({
+          input: routingInput,
+          maxTokens: Math.max(64, Math.min(maxTokens, 512)),
+        });
+        let routingResult: any = null;
+        try { routingResult = JSON.parse(routed.response); } catch { /* no structured action */ }
+        const routedCalls = Array.isArray(routingResult?.function_calls)
+          ? routingResult.function_calls
+          : [];
+        if (routedCalls.length > 0) {
+          needleActionResponse = await handleNeedleResult(routed.response);
+          accumulatedContent = needleActionResponse;
+          setStreamState({ content: accumulatedContent, phase: 'JARVIS completed the local action.' });
+        } else {
+          setStreamState({ phase: `Needle 3 ready. ${selectedModel} processing...` });
+        }
+      }
+
       if (isNeedleLocal) {
         if (deepResearch) {
           throw new Error('Deep Research requires a configured backend. Turn it off to chat locally with Needle 3.');
@@ -444,7 +476,7 @@ export function InputArea() {
             toast.error(speechError instanceof Error ? speechError.message : 'JARVIS could not speak the reply.');
           }
         }
-      } else if (deepResearch) {
+      } else if (needleActionResponse !== null) {\n        // Needle selected and executed a local Android action. Do not bypass it\n        // by sending the same request directly to the downstream model.\n      } else if (deepResearch) {
         for await (const ev of streamResearch(
           content,
           selectedModel,

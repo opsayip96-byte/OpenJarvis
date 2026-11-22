@@ -24,14 +24,18 @@ public class NeedleNativePlugin extends Plugin {
     private static final String MODEL_SHA256 = "c9d915eca282ed42d1a09b143b592adb4cc6744ffe2d294adf5cfc5548170c38";
     private static final String DEFAULT_PROMPT =
         "You are Needle 3, JARVIS's private on-device tool-routing brain. " +
-        "Choose only from the supplied tools. Never invent tools or arguments. " +
-        "Return structured tool calls when a supplied tool matches the request.";
+        "You do not provide general conversation. Select only a supplied tool when the user's request clearly matches it. " +
+        "Never invent tools or arguments. Return no function call for greetings, questions, or unsupported actions.";
+    private static final String DEFAULT_TOOLS =
+        "[{\"name\":\"speak_text\",\"description\":\"Speak the supplied short text aloud using JARVIS's Android voice. Use only when the user explicitly asks JARVIS to say or speak something.\",\"parameters\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\",\"description\":\"The exact text to speak\"}},\"required\":[\"text\"]}},{\"name\":\"open_app_settings\",\"description\":\"Open Android settings for the JARVIS app so the user can change app permissions.\",\"parameters\":{\"type\":\"object\",\"properties\":{},\"required\":[]}},{\"name\":\"stop_speaking\",\"description\":\"Stop JARVIS's current spoken audio immediately.\",\"parameters\":{\"type\":\"object\",\"properties\":{},\"required\":[]}}]";
     private static final ExecutorService WORKER = Executors.newSingleThreadExecutor();
     private static volatile boolean nativeAvailable;
     private static volatile boolean modelLoaded;
+    private static volatile String loadedSystemPrompt = "";
+    private static volatile String loadedToolsJson = "";
 
     private static native void nativeLoadModel(byte[] model, String systemPrompt, String toolsJson);
-    private static native String nativeComplete(String input, int maxTokens);
+    private static native void nativeInit(String systemPrompt, String toolsJson);\n    private static native String nativeComplete(String input, int maxTokens);
     private static native void nativeReset();
 
     @Override
@@ -54,7 +58,16 @@ public class NeedleNativePlugin extends Plugin {
      * so it must be reloaded after Android kills and recreates the app process.
      */
     private synchronized int ensureModelLoaded(String systemPrompt, String toolsJson) throws Exception {
-        if (modelLoaded) return (int) modelFile().length();
+        String prompt = systemPrompt == null || systemPrompt.isEmpty() ? DEFAULT_PROMPT : systemPrompt;
+        String tools = toolsJson == null || toolsJson.isEmpty() ? DEFAULT_TOOLS : toolsJson;
+        if (modelLoaded) {
+            if (!prompt.equals(loadedSystemPrompt) || !tools.equals(loadedToolsJson)) {
+                nativeInit(prompt, tools);
+                loadedSystemPrompt = prompt;
+                loadedToolsJson = tools;
+            }
+            return (int) modelFile().length();
+        }
         if (!nativeAvailable) {
             throw new IllegalStateException("The Needle native engine is not included in this APK.");
         }
@@ -73,9 +86,9 @@ public class NeedleNativePlugin extends Plugin {
             while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
             bytes = output.toByteArray();
         }
-        nativeLoadModel(bytes,
-            systemPrompt == null || systemPrompt.isEmpty() ? DEFAULT_PROMPT : systemPrompt,
-            toolsJson == null || toolsJson.isEmpty() ? "[]" : toolsJson);
+        nativeLoadModel(bytes, prompt, tools);
+        loadedSystemPrompt = prompt;
+        loadedToolsJson = tools;
         modelLoaded = true;
         return bytes.length;
     }
@@ -168,7 +181,7 @@ public class NeedleNativePlugin extends Plugin {
             try {
                 // Lazy-load the local model so chat still works after Android
                 // process death or a normal app restart, without a manual RAM-load step.
-                ensureModelLoaded(DEFAULT_PROMPT, "[]");
+                ensureModelLoaded(DEFAULT_PROMPT, DEFAULT_TOOLS);
                 String input = call.getString("input", "").trim();
                 if (input.isEmpty()) throw new IllegalArgumentException("Enter a prompt.");
                 int maxTokens = call.getInt("maxTokens", 256);

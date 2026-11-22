@@ -271,7 +271,7 @@ export function InputArea() {
         const localPrompt = apiMessages
           .slice(-16)
           .map((message) => `${message.role.toUpperCase()}: ${message.content}`)
-          .join('\\n\\n');
+          .join('\n\n');
         const result = await NeedleNative.complete({
           input: localPrompt,
           maxTokens: Math.max(64, Math.min(maxTokens, 512)),

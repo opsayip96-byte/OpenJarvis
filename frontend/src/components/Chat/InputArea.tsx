@@ -476,7 +476,8 @@ export function InputArea() {
             toast.error(speechError instanceof Error ? speechError.message : 'JARVIS could not speak the reply.');
           }
         }
-      } else if (needleActionResponse !== null) {\n        // Needle selected and executed a local Android action. Do not bypass it\n        // by sending the same request directly to the downstream model.\n      } else if (deepResearch) {
+      } else if (needleActionResponse !== null) {
+        // Needle selected and executed a local Android action. Do not bypass it\n        // by sending the same request directly to the downstream model.\n      } else if (deepResearch) {
         for await (const ev of streamResearch(
           content,
           selectedModel,

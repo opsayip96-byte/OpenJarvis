@@ -115,7 +115,14 @@ public class NeedleNativePlugin extends Plugin {
                 if (!model.isFile() || model.length() == 0) {
                     throw new IllegalStateException("Download Needle 3 before loading it.");
                 }
-                byte[] bytes;\n                try (FileInputStream input = new FileInputStream(model);\n                     ByteArrayOutputStream output = new ByteArrayOutputStream((int) model.length())) {\n                    byte[] buffer = new byte[64 * 1024];\n                    int count;\n                    while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);\n                    bytes = output.toByteArray();\n                }
+                byte[] bytes;
+                try (FileInputStream input = new FileInputStream(model);
+                     ByteArrayOutputStream output = new ByteArrayOutputStream((int) model.length())) {
+                    byte[] buffer = new byte[64 * 1024];
+                    int count;
+                    while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
+                    bytes = output.toByteArray();
+                }
                 nativeLoadModel(bytes, call.getString("systemPrompt", DEFAULT_PROMPT),
                     call.getString("toolsJson", "[]"));
                 modelLoaded = true;

@@ -13,13 +13,15 @@ import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.security.MessageDigest;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 @CapacitorPlugin(name = "NeedleNative")
 public class NeedleNativePlugin extends Plugin {
     private static final String MODEL_URL =
-        "https://huggingface.co/Cactus-Compute/needle3/resolve/main/needle3.cact";
+        "https://huggingface.co/Cactus-Compute/needle3/resolve/d6c7d6a2e9655505e0f8e23339356dd1705900eb/needle3.cact";
+    private static final String MODEL_SHA256 = "c9d915eca282ed42d1a09b143b592adb4cc6744ffe2d294adf5cfc5548170c38";
     private static final String DEFAULT_PROMPT =
         "You are Needle 3, JARVIS's private on-device tool-routing brain. " +
         "Choose only from the supplied tools. Never invent tools or arguments. " +
@@ -81,10 +83,19 @@ public class NeedleNativePlugin extends Plugin {
                 }
                 try (InputStream input = connection.getInputStream();
                      FileOutputStream output = new FileOutputStream(partial)) {
+                    MessageDigest digest = MessageDigest.getInstance("SHA-256");
                     byte[] buffer = new byte[64 * 1024];
                     int count;
-                    while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
+                    while ((count = input.read(buffer)) != -1) {
+                        output.write(buffer, 0, count);
+                        digest.update(buffer, 0, count);
+                    }
                     output.getFD().sync();
+                    StringBuilder actualHash = new StringBuilder();
+                    for (byte value : digest.digest()) actualHash.append(String.format("%02x", value & 0xff));
+                    if (!MODEL_SHA256.contentEquals(actualHash)) {
+                        throw new IllegalStateException("Needle model checksum did not match the pinned release.");
+                    }
                 }
                 if (!partial.isFile() || partial.length() < 1024 * 1024) {
                     throw new IllegalStateException("Downloaded model is incomplete.");

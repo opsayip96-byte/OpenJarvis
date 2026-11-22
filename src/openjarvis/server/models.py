@@ -16,6 +16,8 @@ from pydantic import BaseModel, Field
 class ChatMessage(BaseModel):
     role: str
     content: str = ""
+    # Base64 image payloads for vision-capable engines such as Ollama.
+    images: Optional[List[str]] = None
     name: Optional[str] = None
     tool_calls: Optional[List[Dict[str, Any]]] = None
     tool_call_id: Optional[str] = None

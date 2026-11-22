@@ -42,6 +42,7 @@ def _to_messages(chat_messages) -> list[Message]:
             Message(
                 role=role,
                 content=m.content or "",
+                images=m.images,
                 name=m.name,
                 tool_calls=[
                     ToolCall(
@@ -268,6 +269,7 @@ async def chat_completions(request_body: ChatCompletionRequest, request: Request
                         ChatMessage(
                             role=msg.role.value,
                             content=msg.content,
+                            images=getattr(msg, "images", None),
                             name=msg.name,
                             tool_calls=[
                                 {

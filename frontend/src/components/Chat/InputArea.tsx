@@ -160,6 +160,48 @@ function useResearchCorpusSync(enabled: boolean): {
   return state;
 }
 
+async function handleNeedleResult(raw: string): Promise<string> {
+  let parsed: any;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return raw.trim();
+  }
+  if (!parsed || typeof parsed !== 'object') return raw.trim();
+  if (parsed.success === false) {
+    throw new Error(parsed.error || 'Needle could not route this request.');
+  }
+  const calls = Array.isArray(parsed.function_calls) ? parsed.function_calls : [];
+  const confidence = Number(parsed.confidence ?? 0);
+  if (calls.length === 0) {
+    return "I'm online. Needle 3 is running locally. I act as JARVIS's tool-routing model: I select an available action and prepare its arguments. For normal conversation, choose your JARVIS chat model.";
+  }
+  if (confidence < 0.7) {
+    const names = calls.map((call: any) => String(call.name || 'unknown action')).join(', ');
+    return `I found a possible action (${names}), but confidence is too low to run it safely. Please rephrase the request.`;
+  }
+  const completed: string[] = [];
+  for (const call of calls) {
+    const name = String(call?.name || '');
+    const args = call?.arguments && typeof call.arguments === 'object' ? call.arguments : {};
+    if (name === 'speak_text') {
+      const text = String(args.text || '').trim();
+      if (!text) throw new Error('Needle requested speech without any text.');
+      await JarvisNative.speak({ text, language: 'en-GB', rate: 1, pitch: 1, volume: 1 });
+      completed.push('Spoke the requested text.');
+    } else if (name === 'open_app_settings') {
+      await JarvisNative.openAppSettings();
+      completed.push('Opened JARVIS app settings.');
+    } else if (name === 'stop_speaking') {
+      await JarvisNative.stopSpeaking();
+      completed.push('Stopped speech.');
+    } else {
+      throw new Error(`Needle selected "${name}", but no Android executor is connected for that action yet.`);
+    }
+  }
+  return completed.join(' ');
+}
+
 export function InputArea() {
   const [input, setInput] = useState('');
   const [attachments, setAttachments] = useState<File[]>([]);
@@ -382,8 +424,9 @@ export function InputArea() {
           input: localPrompt,
           maxTokens: Math.max(64, Math.min(maxTokens, 512)),
         });
-        accumulatedContent = result.response?.trim() || '';
-        if (!accumulatedContent) throw new Error('Needle returned an empty response. Check that the model is loaded in Settings.');
+        const rawNeedleOutput = result.response?.trim() || '';
+        if (!rawNeedleOutput) throw new Error('Needle returned an empty response. Check that the model is loaded in Settings.');
+        accumulatedContent = await handleNeedleResult(rawNeedleOutput);
         setStreamState({ content: accumulatedContent, phase: '' });
       } else if (deepResearch) {
         for await (const ev of streamResearch(

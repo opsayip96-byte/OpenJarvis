@@ -8,6 +8,8 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.FileInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
@@ -74,7 +76,7 @@ public class NeedleNativePlugin extends Plugin {
                 if (status != HttpURLConnection.HTTP_OK) {
                     throw new IllegalStateException("Model download failed (HTTP " + status + ").");
                 }
-                long expected = connection.getContentLengthLong();
+                long expected = connection.getContentLength();
                 if (expected > 100L * 1024L * 1024L) {
                     throw new IllegalStateException("Unexpected model size. Download cancelled.");
                 }
@@ -113,7 +115,7 @@ public class NeedleNativePlugin extends Plugin {
                 if (!model.isFile() || model.length() == 0) {
                     throw new IllegalStateException("Download Needle 3 before loading it.");
                 }
-                byte[] bytes = Files.readAllBytes(model.toPath());
+                byte[] bytes;\n                try (FileInputStream input = new FileInputStream(model);\n                     ByteArrayOutputStream output = new ByteArrayOutputStream((int) model.length())) {\n                    byte[] buffer = new byte[64 * 1024];\n                    int count;\n                    while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);\n                    bytes = output.toByteArray();\n                }
                 nativeLoadModel(bytes, call.getString("systemPrompt", DEFAULT_PROMPT),
                     call.getString("toolsJson", "[]"));
                 modelLoaded = true;

@@ -72,6 +72,26 @@ Java_com_openjarvis_jarvis_NeedleNativePlugin_nativeLoadModel(
     modelLoaded = true;
 }
 
+extern "C" JNIEXPORT void JNICALL
+Java_com_openjarvis_jarvis_NeedleNativePlugin_nativeInit(
+    JNIEnv* env, jclass, jstring systemPrompt, jstring toolsJson) {
+    std::lock_guard<std::mutex> guard(engineMutex);
+    if (!modelLoaded) {
+        throwJava(env, "Load the Needle model before initializing tools.");
+        return;
+    }
+    cactus_reset();
+    const std::string prompt = fromJava(env, systemPrompt);
+    const std::string tools = fromJava(env, toolsJson);
+    const int initialized = cactus_init(
+        prompt.empty() ? "You are Needle 3, JARVIS's local tool-routing model." : prompt.c_str(),
+        tools.empty() ? "[]" : tools.c_str(),
+        nullptr);
+    if (initialized < 0) {
+        throwJava(env, lastError("Cactus could not initialize Needle tools."));
+    }
+}
+
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_openjarvis_jarvis_NeedleNativePlugin_nativeComplete(
     JNIEnv* env, jclass, jstring input, jint maxTokens) {

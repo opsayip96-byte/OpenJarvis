@@ -24,7 +24,7 @@ After a successful run, open its **Artifacts** section and download `JARVIS-Need
 - `JARVIS-Needle3-Android-arm64-debug.apk`
 - `needle3.cact`
 
-The model can also be downloaded directly from [Cactus-Compute/needle3 on Hugging Face](https://huggingface.co/Cactus-Compute/needle3).
+Direct model download: [needle3.cact](https://huggingface.co/Cactus-Compute/needle3/resolve/main/needle3.cact). Model details and license: [Cactus-Compute/needle3](https://huggingface.co/Cactus-Compute/needle3).
 
 ## On-device use
 

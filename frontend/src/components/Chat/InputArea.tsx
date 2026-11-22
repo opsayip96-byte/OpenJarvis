@@ -428,6 +428,22 @@ export function InputArea() {
         if (!rawNeedleOutput) throw new Error('Needle returned an empty response. Check that the model is loaded in Settings.');
         accumulatedContent = await handleNeedleResult(rawNeedleOutput);
         setStreamState({ content: accumulatedContent, phase: '' });
+        // A reply to microphone input should be audible even when the optional
+        // chat-wide autoplay setting is off. Avoid speaking twice when Needle
+        // already executed the explicit speak_text tool.
+        if (recognizedText && !accumulatedContent.includes('Spoke the requested text.')) {
+          try {
+            await JarvisNative.speak({
+              text: accumulatedContent,
+              language: 'en-GB',
+              rate: 1,
+              pitch: 1,
+              volume: 1,
+            });
+          } catch (speechError) {
+            toast.error(speechError instanceof Error ? speechError.message : 'JARVIS could not speak the reply.');
+          }
+        }
       } else if (deepResearch) {
         for await (const ev of streamResearch(
           content,

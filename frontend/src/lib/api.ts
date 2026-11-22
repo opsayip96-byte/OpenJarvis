@@ -3,6 +3,7 @@ import { SUPABASE_ANON_KEY, SUPABASE_URL } from './supabase';
 import { serializeToolCallArguments } from './tool-call';
 import { timeZoneHeaders } from './timezone';
 import { isAndroidNative, JarvisNative } from './android-native';
+import { NeedleNative } from './needle-native';
 
 // ---------------------------------------------------------------------------
 // Supabase config
@@ -240,19 +241,46 @@ export async function resetInferenceSource(): Promise<void> {
 // API functions
 // ---------------------------------------------------------------------------
 
+const withNeedleLocalModel = async (models: ModelInfo[]): Promise<ModelInfo[]> => {
+  if (!isAndroidNative()) return models;
+  try {
+    const status = await NeedleNative.getStatus();
+    if (!status.nativeAvailable || models.some((model) => model.id === 'needle3-local')) return models;
+    return [...models, {
+      id: 'needle3-local',
+      object: 'model',
+      created: 0,
+      owned_by: 'openjarvis-local',
+    }];
+  } catch {
+    // Older APKs may not include the Needle bridge. Keep remote models usable.
+    return models;
+  }
+};
+
 export async function fetchModels(): Promise<ModelInfo[]> {
+  let remoteModels: ModelInfo[] = [];
   if (isTauri()) {
     try {
       const result = await tauriInvoke<{ data?: ModelInfo[] }>('fetch_models');
-      return result?.data || [];
+      remoteModels = result?.data || [];
     } catch {
-      // Fall through to fetch
+      // Fall through to HTTP discovery.
     }
   }
-  const res = await apiFetch(`/v1/models`);
-  if (!res.ok) throw new Error(`Failed to fetch models: ${res.status}`);
-  const data = await res.json();
-  return data.data || [];
+  if (remoteModels.length === 0) {
+    try {
+      const res = await apiFetch(`/v1/models`);
+      if (!res.ok) throw new Error(`Failed to fetch models: ${res.status}`);
+      const data = await res.json();
+      remoteModels = data.data || [];
+    } catch (error) {
+      // Android's on-device Needle model must remain selectable even when the
+      // optional cloud backend is offline. Other platforms retain old errors.
+      if (!isAndroidNative()) throw error;
+    }
+  }
+  return withNeedleLocalModel(remoteModels);
 }
 
 export async function fetchRecommendedModel(): Promise<{ model: string; reason: string }> {

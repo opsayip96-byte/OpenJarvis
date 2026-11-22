@@ -400,7 +400,7 @@ export function CommandPalette() {
                         </span>
                       )}
                     </button>
-                    {model.owned_by !== 'litellm' && (
+                    {model.owned_by !== 'litellm' && model.id !== 'needle3-local' && (
                       <button
                         onClick={() => handleDelete(model.id)}
                         disabled={isDeleting}

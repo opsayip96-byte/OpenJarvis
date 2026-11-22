@@ -57,7 +57,18 @@ export function useSpeech() {
   useEffect(() => {
     if (isAndroidNative()) {
       JarvisNative.checkMicrophonePermission()
-        .then(({ available: canRecognize }) => setAvailable(canRecognize))
+        .then(async ({ available: canRecognize }) => {
+          if (canRecognize) {
+            setAvailable(true);
+            return;
+          }
+          try {
+            const health = await fetchSpeechHealth();
+            setAvailable(health.available);
+          } catch {
+            setAvailable(false);
+          }
+        })
         .catch(() => setAvailable(false));
     } else if (browserRecognitionConstructor()) {
       setAvailable(true);
@@ -87,15 +98,20 @@ export function useSpeech() {
         try { configuredLanguage = localStorage.getItem('openjarvis-speech-language') || ''; } catch {}
         await JarvisNative.startRecognition({ language: configuredLanguage || 'en-GB' });
         setState('recording');
+        return;
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Could not start Android speech recognition.';
         const code = String((err as { code?: string })?.code ?? '');
-        const denied = code.includes('MICROPHONE_PERMISSION_DENIED') || /microphone permission/i.test(message);
-        setPermissionDenied(denied);
-        setError(message);
-        setState('idle');
+        if (code !== 'RECOGNIZER_UNAVAILABLE') {
+          const denied = code.includes('MICROPHONE_PERMISSION_DENIED') || /microphone permission/i.test(message);
+          setPermissionDenied(denied);
+          setError(message);
+          setState('idle');
+          return;
+        }
+        // Some Android builds have no system speech service. Fall through to
+        // browser recognition or recorded-audio transcription instead.
       }
-      return;
     }
 
     const Recognition = browserRecognitionConstructor();

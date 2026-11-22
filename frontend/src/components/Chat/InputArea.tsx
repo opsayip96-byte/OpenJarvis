@@ -6,6 +6,7 @@ import { streamChat, streamResearch } from '../../lib/sse';
 import { fetchSavings, getBase, authHeaders, isMemoryContextEnabled } from '../../lib/api';
 import { listConnectors, getSyncStatus } from '../../lib/connectors-api';
 import { serializeToolCallArguments } from '../../lib/tool-call';
+import { NeedleNative } from '../../lib/needle-native';
 import {
   engineFromCompletionChunk,
   resolveChatEngine,
@@ -260,8 +261,25 @@ export function InputArea() {
         : `Request: "${content.slice(0, 80)}${content.length > 80 ? '...' : ''}" → ${selectedModel}`,
     });
 
+    const isNeedleLocal = selectedModel === 'needle3-local';
+
     try {
-      if (deepResearch) {
+      if (isNeedleLocal) {
+        if (deepResearch) {
+          throw new Error('Deep Research requires a configured backend. Turn it off to chat locally with Needle 3.');
+        }
+        const localPrompt = apiMessages
+          .slice(-16)
+          .map((message) => `${message.role.toUpperCase()}: ${message.content}`)
+          .join('\\n\\n');
+        const result = await NeedleNative.complete({
+          input: localPrompt,
+          maxTokens: Math.max(64, Math.min(maxTokens, 512)),
+        });
+        accumulatedContent = result.response?.trim() || '';
+        if (!accumulatedContent) throw new Error('Needle returned an empty response. Check that the model is loaded in Settings.');
+        setStreamState({ content: accumulatedContent, phase: '' });
+      } else if (deepResearch) {
         for await (const ev of streamResearch(
           content,
           selectedModel,
@@ -513,18 +531,21 @@ export function InputArea() {
         complexity_tier: complexity?.tier,
         suggested_max_tokens: complexity?.suggested_max_tokens,
       };
-      // Check if the response has digest audio available
+      // Digest metadata is a backend feature. Do not make network requests
+      // for a fully local Needle turn.
       let audioMeta: { url: string } | undefined;
-      try {
-        const digestRes = await fetch(`${getBase()}/api/digest`, { headers: authHeaders() });
-        if (digestRes.ok) {
-          const digest = await digestRes.json();
-          if (digest.audio_available) {
-            audioMeta = { url: `${getBase()}/api/digest/audio` };
+      if (!isNeedleLocal) {
+        try {
+          const digestRes = await fetch(`${getBase()}/api/digest`, { headers: authHeaders() });
+          if (digestRes.ok) {
+            const digest = await digestRes.json();
+            if (digest.audio_available) {
+              audioMeta = { url: `${getBase()}/api/digest/audio` };
+            }
           }
+        } catch {
+          // Not a digest response or server unavailable — skip
         }
-      } catch {
-        // Not a digest response or server unavailable — skip
       }
 
       updateLastAssistant(
@@ -552,7 +573,7 @@ export function InputArea() {
       // `done` event's usage payload — re-fetching here would overwrite
       // it with a potentially stale snapshot if the server's research
       // telemetry hasn't been merged into /v1/savings yet.
-      if (!deepResearch) {
+      if (!deepResearch && !isNeedleLocal) {
         fetchSavings()
           .then((data) => useAppStore.getState().setSavings(data))
           .catch(() => {});

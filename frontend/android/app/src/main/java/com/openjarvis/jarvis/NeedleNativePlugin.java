@@ -49,6 +49,37 @@ public class NeedleNativePlugin extends Plugin {
         return new File(getContext().getFilesDir(), "needle3.cact");
     }
 
+    /**
+     * Load the downloaded model on demand. The native runtime is process-local,
+     * so it must be reloaded after Android kills and recreates the app process.
+     */
+    private synchronized int ensureModelLoaded(String systemPrompt, String toolsJson) throws Exception {
+        if (modelLoaded) return (int) modelFile().length();
+        if (!nativeAvailable) {
+            throw new IllegalStateException("The Needle native engine is not included in this APK.");
+        }
+        File model = modelFile();
+        if (!model.isFile() || model.length() == 0) {
+            throw new IllegalStateException("Download Needle 3 in Settings before sending a local message.");
+        }
+        if (model.length() > 100L * 1024L * 1024L) {
+            throw new IllegalStateException("Needle model file is unexpectedly large. Refusing to load it.");
+        }
+        byte[] bytes;
+        try (FileInputStream input = new FileInputStream(model);
+             ByteArrayOutputStream output = new ByteArrayOutputStream((int) model.length())) {
+            byte[] buffer = new byte[64 * 1024];
+            int count;
+            while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
+            bytes = output.toByteArray();
+        }
+        nativeLoadModel(bytes,
+            systemPrompt == null || systemPrompt.isEmpty() ? DEFAULT_PROMPT : systemPrompt,
+            toolsJson == null || toolsJson.isEmpty() ? "[]" : toolsJson);
+        modelLoaded = true;
+        return bytes.length;
+    }
+
     @PluginMethod
     public void getStatus(PluginCall call) {
         File model = modelFile();
@@ -120,23 +151,10 @@ public class NeedleNativePlugin extends Plugin {
     public void loadModel(PluginCall call) {
         WORKER.execute(() -> {
             try {
-                if (!nativeAvailable) throw new IllegalStateException("The Needle native engine is not included in this APK.");
-                File model = modelFile();
-                if (!model.isFile() || model.length() == 0) {
-                    throw new IllegalStateException("Download Needle 3 before loading it.");
-                }
-                byte[] bytes;
-                try (FileInputStream input = new FileInputStream(model);
-                     ByteArrayOutputStream output = new ByteArrayOutputStream((int) model.length())) {
-                    byte[] buffer = new byte[64 * 1024];
-                    int count;
-                    while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
-                    bytes = output.toByteArray();
-                }
-                nativeLoadModel(bytes, call.getString("systemPrompt", DEFAULT_PROMPT),
+                int bytes = ensureModelLoaded(
+                    call.getString("systemPrompt", DEFAULT_PROMPT),
                     call.getString("toolsJson", "[]"));
-                modelLoaded = true;
-                call.resolve(new JSObject().put("loaded", true).put("bytes", bytes.length));
+                call.resolve(new JSObject().put("loaded", true).put("bytes", bytes));
             } catch (Exception error) {
                 modelLoaded = false;
                 call.reject("Needle load failed: " + error.getMessage(), "NEEDLE_LOAD_FAILED", error);
@@ -148,7 +166,9 @@ public class NeedleNativePlugin extends Plugin {
     public void complete(PluginCall call) {
         WORKER.execute(() -> {
             try {
-                if (!modelLoaded) throw new IllegalStateException("Load Needle 3 first.");
+                // Lazy-load the local model so chat still works after Android
+                // process death or a normal app restart, without a manual RAM-load step.
+                ensureModelLoaded(DEFAULT_PROMPT, "[]");
                 String input = call.getString("input", "").trim();
                 if (input.isEmpty()) throw new IllegalArgumentException("Enter a prompt.");
                 int maxTokens = call.getInt("maxTokens", 256);

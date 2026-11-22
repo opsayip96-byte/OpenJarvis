@@ -35,7 +35,8 @@ public class NeedleNativePlugin extends Plugin {
     private static volatile String loadedToolsJson = "";
 
     private static native void nativeLoadModel(byte[] model, String systemPrompt, String toolsJson);
-    private static native void nativeInit(String systemPrompt, String toolsJson);\n    private static native String nativeComplete(String input, int maxTokens);
+    private static native void nativeInit(String systemPrompt, String toolsJson);
+    private static native String nativeComplete(String input, int maxTokens);
     private static native void nativeReset();
 
     @Override
@@ -166,7 +167,7 @@ public class NeedleNativePlugin extends Plugin {
             try {
                 int bytes = ensureModelLoaded(
                     call.getString("systemPrompt", DEFAULT_PROMPT),
-                    call.getString("toolsJson", "[]"));
+                    call.getString("toolsJson", DEFAULT_TOOLS));
                 call.resolve(new JSObject().put("loaded", true).put("bytes", bytes));
             } catch (Exception error) {
                 modelLoaded = false;

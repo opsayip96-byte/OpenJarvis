@@ -163,8 +163,12 @@ export function CommandPalette() {
       setModelLoading(true);
       addLogEntry({ timestamp: Date.now(), level: 'info', category: 'model', message: `Switching to ${modelId}...` });
       try {
-        await preloadModel(modelId, owner);
-        addLogEntry({ timestamp: Date.now(), level: 'info', category: 'model', message: `${modelId} loaded` });
+        if (modelId === 'needle3-local') {
+          addLogEntry({ timestamp: Date.now(), level: 'info', category: 'model', message: 'Needle 3 uses its Android native runtime; no Ollama preload is needed.' });
+        } else {
+          await preloadModel(modelId, owner);
+          addLogEntry({ timestamp: Date.now(), level: 'info', category: 'model', message: `${modelId} loaded` });
+        }
       } catch (e: any) {
         addLogEntry({ timestamp: Date.now(), level: 'error', category: 'model', message: `Failed to load ${modelId}: ${e.message}` });
       } finally {

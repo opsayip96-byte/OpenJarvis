@@ -203,9 +203,14 @@ async def chat_completions(request_body: ChatCompletionRequest, request: Request
             model=model,
             choices=[Choice(message=ChoiceMessage(content=confirmation))],
         )
+    # Vision payloads must reach the engine as image bytes. The general
+    # server agent currently accepts text-only input, so route media turns
+    # directly to the selected engine rather than silently dropping images.
+    has_vision_input = any(message.images for message in request_body.messages)
     use_server_agent = (
         agent is not None
         and not request_body.tools
+        and not has_vision_input
         and (not request_body.stream or bool(getattr(agent, "_tools", None)))
     )
 

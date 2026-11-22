@@ -339,7 +339,12 @@ public class JarvisNativePlugin extends Plugin implements RecognitionListener {
 
     @Override
     public void onResults(Bundle results) {
+        int previousLength = transcript.length();
         appendBestResult(results);
+        String latestPhrase = transcript.substring(previousLength).trim();
+        if (!latestPhrase.isEmpty()) {
+            notifyListeners("speechResult", new JSObject().put("text", latestPhrase));
+        }
         if (stopping) finishRecognition();
         else if (recognizer != null && listening) {
             getActivity().runOnUiThread(() -> {

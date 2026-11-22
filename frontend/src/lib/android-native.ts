@@ -8,6 +8,7 @@ export interface AndroidVoice {
 
 interface JarvisNativePlugin {
   checkMicrophonePermission(): Promise<{ state: string; available: boolean }>;
+  addListener(eventName: 'speechResult', listener: (event: { text: string }) => void): Promise<{ remove: () => Promise<void> }>;
   startRecognition(options: { language: string }): Promise<{ started: boolean }>;
   stopRecognition(): Promise<{ text: string }>;
   cancelRecognition(): Promise<void>;

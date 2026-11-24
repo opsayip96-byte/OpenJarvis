@@ -176,9 +176,10 @@ async function handleNeedleResult(raw: string): Promise<string> {
   if (calls.length === 0) {
     return "I'm online. Needle 3 is running locally. I act as JARVIS's tool-routing model: I select an available action and prepare its arguments. For normal conversation, choose your JARVIS chat model.";
   }
-  if (confidence < 0.7) {
-    const names = calls.map((call: any) => String(call.name || 'unknown action')).join(', ');
-    return `I found a possible action (${names}), but confidence is too low to run it safely. Please rephrase the request.`;
+  if (confidence < 0.85) {
+    // Low-confidence tool predictions are not user-facing failures. Needle is
+    // a router, so uncertain actions must be treated as ordinary conversation.
+    return "Needle 3 is running locally. I'm JARVIS's on-device tool router: I identify supported actions, validate their arguments, and hand ordinary questions to your selected chat model. I won't execute an action unless the request is clear and confidence is high.";
   }
   const completed: string[] = [];
   for (const call of calls) {

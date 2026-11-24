@@ -102,15 +102,16 @@ export function useSpeech() {
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Could not start Android speech recognition.';
         const code = String((err as { code?: string })?.code ?? '');
-        if (code !== 'RECOGNIZER_UNAVAILABLE') {
-          const denied = code.includes('MICROPHONE_PERMISSION_DENIED') || /microphone permission/i.test(message);
-          setPermissionDenied(denied);
+        const denied = code.includes('MICROPHONE_PERMISSION_DENIED') || /microphone permission/i.test(message);
+        if (denied) {
+          setPermissionDenied(true);
           setError(message);
           setState('idle');
           return;
         }
-        // Some Android builds have no system speech service. Fall through to
-        // browser recognition or recorded-audio transcription instead.
+        // The Android recognizer can exist but fail to start on some vendor
+        // ROMs. Do not strand the mic button: try Web Speech, then the
+        // MediaRecorder + server-transcription fallback below.
       }
     }
 

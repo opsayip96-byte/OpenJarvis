@@ -13,6 +13,10 @@ interface JarvisNativePlugin {
   stopRecognition(): Promise<{ text: string }>;
   cancelRecognition(): Promise<void>;
   openAppSettings(): Promise<void>;
+  openSystemPanel(options: { panel: string }): Promise<void>;
+  launchApp(options: { packageName: string }): Promise<void>;
+  setMediaVolume(options: { percent: number }): Promise<{ percent: number }>;
+  getBatteryStatus(): Promise<{ percent: number; charging: boolean }>;
   saveSecureValue(options: { name: string; value: string }): Promise<void>;
   getSecureValue(options: { name: string }): Promise<{ value: string }>;
   getSecureStatus(): Promise<Record<string, boolean>>;

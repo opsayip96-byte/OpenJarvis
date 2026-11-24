@@ -35,6 +35,10 @@ async function reloadAndroidCloudKey(keyName: string, keyValue: string): Promise
     const body = await response.text().catch(() => '');
     throw new Error(`Backend rejected provider configuration (${response.status})${body ? `: ${body.slice(0, 240)}` : ''}`);
   }
+  const result = await response.json().catch(() => ({}));
+  if (result.status !== 'ok') {
+    throw new Error(result.message || 'The backend did not activate the cloud provider. Check the API key and provider configuration.');
+  }
 }
 
 /** Load Android credentials from Keystore-backed native storage before API calls begin. */

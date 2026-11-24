@@ -117,28 +117,40 @@ public class JarvisNativePlugin extends Plugin implements RecognitionListener {
             call.reject("No Android speech recognition service is available on this device.", "RECOGNIZER_UNAVAILABLE");
             return;
         }
-        releaseRecognizer();
-        transcript.setLength(0);
-        stopping = false;
-        language = call.getString("language", "en-GB");
-        recognitionIntent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
-        recognitionIntent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
-        recognitionIntent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, language);
-        recognitionIntent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
-        recognitionIntent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3);
-        try {
-            recognizer = SpeechRecognizer.createSpeechRecognizer(getContext());
-            recognizer.setRecognitionListener(this);
-            recognizer.startListening(recognitionIntent);
-            listening = true;
-            call.resolve(new JSObject().put("started", true));
-        } catch (SecurityException e) {
-            releaseRecognizer();
-            call.reject("Android denied microphone access. Check app microphone permission.", "MICROPHONE_PERMISSION_DENIED", e);
-        } catch (Exception e) {
-            releaseRecognizer();
-            call.reject("Could not start Android speech recognition.", "RECOGNITION_START_FAILED", e);
+        // Android's SpeechRecognizer API must be created, started, stopped and
+        // destroyed on the main looper. Capacitor bridge calls are not
+        // guaranteed to arrive on that thread on every Android vendor ROM.
+        android.app.Activity activity = getActivity();
+        if (activity == null) {
+            call.reject("JARVIS is not attached to an active Android screen.", "ACTIVITY_UNAVAILABLE");
+            return;
         }
+        activity.runOnUiThread(() -> {
+            try {
+                releaseRecognizer();
+                transcript.setLength(0);
+                stopping = false;
+                language = call.getString("language", "en-GB");
+                recognitionIntent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+                recognitionIntent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
+                recognitionIntent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, language);
+                recognitionIntent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
+                recognitionIntent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3);
+                recognizer = SpeechRecognizer.createSpeechRecognizer(getContext());
+                recognizer.setRecognitionListener(this);
+                recognizer.startListening(recognitionIntent);
+                listening = true;
+                call.resolve(new JSObject().put("started", true));
+            } catch (SecurityException e) {
+                releaseRecognizer();
+                call.reject("Android denied microphone access. Check JARVIS microphone permission.", "MICROPHONE_PERMISSION_DENIED", e);
+            } catch (RuntimeException e) {
+                releaseRecognizer();
+                String detail = e.getMessage();
+                call.reject("Android speech service could not start" +
+                    (detail == null || detail.trim().isEmpty() ? "." : ": " + detail), "RECOGNITION_START_FAILED", e);
+            }
+        });
     }
 
     @PluginMethod

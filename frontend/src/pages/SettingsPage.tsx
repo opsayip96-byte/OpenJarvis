@@ -80,9 +80,9 @@ function ApiKeyInput({
   const [saved, setSaved] = useState(false);
   const [hasKey, setHasKey] = useState(false);
   const [error, setError] = useState('');
-  const desktopKeyStorage = isTauri();
-  const serverToolStorage = !desktopKeyStorage && !!toolName;
-  const canManage = desktopKeyStorage || serverToolStorage;
+  const secureKeyStorage = isTauri() || isAndroidNative();
+  const serverToolStorage = !secureKeyStorage && !!toolName;
+  const canManage = secureKeyStorage || serverToolStorage;
 
   const refresh = useCallback(async () => {
     if (!canManage) {
@@ -90,14 +90,14 @@ function ApiKeyInput({
       return;
     }
     try {
-      const status = desktopKeyStorage
+      const status = secureKeyStorage
         ? await getCloudKeyStatus()
         : await fetchToolCredentialStatus(toolName!);
       setHasKey(!!status[keyName]);
     } catch {
       setHasKey(false);
     }
-  }, [canManage, desktopKeyStorage, keyName, toolName]);
+  }, [canManage, secureKeyStorage, keyName, toolName]);
 
   useEffect(() => {
     void refresh();
@@ -110,7 +110,7 @@ function ApiKeyInput({
     if (!next) return;
     setError('');
     try {
-      if (desktopKeyStorage) {
+      if (secureKeyStorage) {
         await saveCloudKey(keyName, next);
       } else if (toolName) {
         await saveToolCredentials(toolName, { [keyName]: next });
@@ -130,7 +130,7 @@ function ApiKeyInput({
   const remove = async () => {
     setError('');
     try {
-      if (desktopKeyStorage) {
+      if (secureKeyStorage) {
         await saveCloudKey(keyName, '');
       } else if (toolName) {
         await deleteToolCredential(toolName, keyName);
@@ -154,7 +154,7 @@ function ApiKeyInput({
         value={value}
         onChange={e => setValue(e.target.value)}
         onBlur={() => { if (value.trim()) void save(value); }}
-        placeholder={hasKey ? (desktopKeyStorage ? 'Saved in secure storage' : 'Saved by local server') : placeholder}
+        placeholder={hasKey ? (secureKeyStorage ? 'Saved in secure storage' : 'Saved by local server') : placeholder}
         disabled={!canManage}
         className="w-48 px-2 py-1 rounded text-xs"
         style={{ background: 'var(--color-bg)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }} />

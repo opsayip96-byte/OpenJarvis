@@ -1342,7 +1342,12 @@ async def list_models(request: Request) -> ModelListResponse:
     active_model_is_nim = (
         active_model and _engine_key_for_model(engine, active_model) == "nim"
     )
-    if active_model and not active_model_is_nim and active_model not in model_ids:
+    if (
+        active_model
+        and not active_model_is_nim
+        and active_model not in model_ids
+        and is_cloud_model(active_model)
+    ):
         model_ids.append(active_model)
 
     # Keep embed-only models out of the chat model picker. They still work for

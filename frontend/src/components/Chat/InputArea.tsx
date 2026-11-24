@@ -260,6 +260,8 @@ export function InputArea() {
   const streamState = useAppStore((s) => s.streamState);
   const messages = useAppStore((s) => s.messages);
   const speechEnabled = useAppStore((s) => s.settings.speechEnabled);
+  const voiceOutputEnabled = useAppStore((s) => s.settings.voiceOutputEnabled);
+  const voiceAutoplay = useAppStore((s) => s.settings.voiceAutoplay);
   const maxTokens = useAppStore((s) => s.settings.maxTokens);
   const temperature = useAppStore((s) => s.settings.temperature);
   const createConversation = useAppStore((s) => s.createConversation);
@@ -805,6 +807,36 @@ export function InputArea() {
         researchTraces.length > 0 ? researchTraces : undefined,
         researchSourcesByRef.size > 0 ? flushSources() : undefined,
       );
+      // Speak answers to microphone-originated questions automatically.
+      // Typed messages follow the explicit voice-output preference.
+      const shouldSpeak = isAndroidNative() && Boolean(accumulatedContent.trim()) &&
+        (Boolean(recognizedText) || voiceOutputEnabled || voiceAutoplay);
+      if (shouldSpeak) {
+        try {
+          const spokenText = accumulatedContent
+            .replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '$1')
+            .replace(/https?:\/\/\S+/g, '')
+            .replace(/[`*_#>]/g, '')
+            .trim();
+          if (spokenText) {
+            await JarvisNative.speak({
+              text: spokenText.slice(0, 6000),
+              language: 'en-GB',
+              rate: 0.96,
+              pitch: 0.9,
+              volume: 1,
+            });
+          }
+        } catch (error) {
+          useAppStore.getState().addLogEntry({
+            timestamp: Date.now(),
+            level: 'warning',
+            category: 'speech',
+            message: 'Voice reply failed: ' + (error instanceof Error ? error.message : String(error)),
+          });
+          toast.error('JARVIS replied in text, but Android voice playback failed. Check your Text-to-Speech engine and media volume.');
+        }
+      }
       if (timerRef.current) {
         clearInterval(timerRef.current);
         timerRef.current = null;
@@ -840,6 +872,8 @@ export function InputArea() {
     deepResearch,
     temperature,
     maxTokens,
+    voiceOutputEnabled,
+    voiceAutoplay,
   ]);
 
   sendRecognizedSpeechRef.current = (text) => sendMessage(text);

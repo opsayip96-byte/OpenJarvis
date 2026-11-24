@@ -195,6 +195,37 @@ async function handleNeedleResult(raw: string): Promise<string> {
     } else if (name === 'stop_speaking') {
       await JarvisNative.stopSpeaking();
       completed.push('Stopped speech.');
+    } else if (name === 'open_system_panel') {
+      const panel = String(args.panel || '').trim();
+      const labels: Record<string, string> = {
+        wifi: 'Wi-Fi settings',
+        bluetooth: 'Bluetooth settings',
+        display: 'Display settings',
+        sound: 'Sound settings',
+        battery: 'Battery settings',
+        location: 'Location settings',
+        app_settings: 'JARVIS app permissions',
+      };
+      if (!labels[panel]) throw new Error('Needle requested an unsupported Android settings panel.');
+      await JarvisNative.openSystemPanel({ panel });
+      completed.push(`Opened ${labels[panel]}.`);
+    } else if (name === 'launch_app') {
+      const packageName = String(args.packageName || '').trim();
+      if (!/^[A-Za-z0-9_]+(?:\\.[A-Za-z0-9_]+)+$/.test(packageName)) {
+        throw new Error('To launch an app, JARVIS needs its valid Android package name.');
+      }
+      await JarvisNative.launchApp({ packageName });
+      completed.push(`Launched ${packageName}.`);
+    } else if (name === 'set_media_volume') {
+      const percent = Number(args.percent);
+      if (!Number.isFinite(percent) || percent < 0 || percent > 100) {
+        throw new Error('Media volume must be between 0 and 100 percent.');
+      }
+      const result = await JarvisNative.setMediaVolume({ percent });
+      completed.push(`Set media volume to ${result.percent}%.`);
+    } else if (name === 'get_battery_status') {
+      const battery = await JarvisNative.getBatteryStatus();
+      completed.push(`Phone battery is ${battery.percent}%, ${battery.charging ? 'charging' : 'not charging'}.`);
     } else {
       throw new Error(`Needle selected "${name}", but no Android executor is connected for that action yet.`);
     }

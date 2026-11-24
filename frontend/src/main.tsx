@@ -26,21 +26,21 @@ function applyTheme() {
 
 applyTheme();
 
-// Fetch the API base URL from the Tauri backend before rendering.
-// This ensures JARVIS_PORT is defined in one place (the Rust backend).
-// In non-Tauri environments this is a no-op.
-initApiBase().then(initAndroidCredentials).catch(() => {}).finally(() => {
-  // Kick off analytics init in the background — it's never awaited so
-  // a slow/failed identity fetch never delays UI render.
-  void initAnalytics();
+// Render the interface immediately. Native credential storage can occasionally
+// take longer during Android process recreation; it must never hold the WebView
+// on a blank launch screen. API requests independently tolerate missing keys.
+createRoot(document.getElementById('root')!).render(
+  <StrictMode>
+    <ErrorBoundary>
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>
+    </ErrorBoundary>
+  </StrictMode>,
+);
 
-  createRoot(document.getElementById('root')!).render(
-    <StrictMode>
-      <ErrorBoundary>
-        <BrowserRouter>
-          <App />
-        </BrowserRouter>
-      </ErrorBoundary>
-    </StrictMode>,
-  );
-});
+// Initialize native services in the background after the first paint.
+void initApiBase()
+  .then(() => initAndroidCredentials())
+  .catch((error) => console.warn('JARVIS startup services were not fully initialized:', error));
+void initAnalytics();

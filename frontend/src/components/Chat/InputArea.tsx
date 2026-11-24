@@ -210,12 +210,25 @@ async function handleNeedleResult(raw: string): Promise<string> {
       await JarvisNative.openSystemPanel({ panel });
       completed.push(`Opened ${labels[panel]}.`);
     } else if (name === 'launch_app') {
-      const packageName = String(args.packageName || '').trim();
+      const requestedApp = String(args.packageName || args.package_name || args.app || '').trim();
+      const appPackages: Record<string, string> = {
+        youtube: 'com.google.android.youtube',
+        chrome: 'com.android.chrome',
+        whatsapp: 'com.whatsapp',
+        instagram: 'com.instagram.android',
+        maps: 'com.google.android.apps.maps',
+        gmail: 'com.google.android.gm',
+        camera: 'com.android.camera2',
+        spotify: 'com.spotify.music',
+        settings: 'com.android.settings',
+        telegram: 'org.telegram.messenger',
+      };
+      const packageName = appPackages[requestedApp.toLowerCase()] || requestedApp;
       if (!/^[A-Za-z0-9_]+(?:\\.[A-Za-z0-9_]+)+$/.test(packageName)) {
-        throw new Error('To launch an app, JARVIS needs its valid Android package name.');
+        throw new Error('Tell me the app name, for example YouTube, Chrome, WhatsApp, Instagram, Maps, Gmail, Camera, or Spotify.');
       }
       await JarvisNative.launchApp({ packageName });
-      completed.push(`Launched ${packageName}.`);
+      completed.push(`Launched ${requestedApp}.`);
     } else if (name === 'set_media_volume') {
       const percent = Number(args.percent);
       if (!Number.isFinite(percent) || percent < 0 || percent > 100) {

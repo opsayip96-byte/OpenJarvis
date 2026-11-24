@@ -466,20 +466,25 @@ export function InputArea() {
         if (!needleStatus.nativeAvailable || !needleStatus.modelDownloaded) {
           throw new Error('Needle 3 routing is not ready. Install the Needle-enabled JARVIS build and download the local Needle model in Settings.');
         }
-        const routingInput = apiMessages
-          .slice(-16)
-          .map((message) => `${message.role.toUpperCase()}: ${message.content}`)
-          .join('\\n\\n');
+        // Route only the newest user request. Sending the whole history can
+        // make Needle repeat an old tool call from an earlier turn.
+        const latestUserRequest = [...apiMessages].reverse().find((message) => message.role === 'user')?.content?.trim() || content;
+        const routingInput =
+          "Decide whether this latest request explicitly asks you to execute one available Android tool. " +
+          "Do not infer actions from statements, questions, model-selection updates, context, or past turns. " +
+          "If it is ordinary conversation, return no function calls.\\nLATEST USER REQUEST:\\n" + latestUserRequest;
         const routed = await NeedleNative.complete({
           input: routingInput,
           maxTokens: Math.max(64, Math.min(maxTokens, 512)),
         });
         let routingResult: any = null;
-        try { routingResult = JSON.parse(routed.response); } catch { /* no structured action */ }
+        try { routingResult = JSON.parse(routed.response); } catch { /* malformed routing means normal chat */ }
         const routedCalls = Array.isArray(routingResult?.function_calls)
           ? routingResult.function_calls
           : [];
-        if (routedCalls.length > 0) {
+        const routingConfidence = Number(routingResult?.confidence ?? 0);
+        // Low-confidence predictions must fall through to the selected chat model.
+        if (routedCalls.length > 0 && routingConfidence >= 0.85) {
           needleActionResponse = await handleNeedleResult(routed.response);
           accumulatedContent = needleActionResponse;
           setStreamState({ content: accumulatedContent, phase: 'JARVIS completed the local action.' });

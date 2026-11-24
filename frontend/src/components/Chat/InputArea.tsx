@@ -830,8 +830,8 @@ export function InputArea() {
         } catch (error) {
           useAppStore.getState().addLogEntry({
             timestamp: Date.now(),
-            level: 'warning',
-            category: 'speech',
+            level: 'warn',
+            category: 'chat',
             message: 'Voice reply failed: ' + (error instanceof Error ? error.message : String(error)),
           });
           toast.error('JARVIS replied in text, but Android voice playback failed. Check your Text-to-Speech engine and media volume.');

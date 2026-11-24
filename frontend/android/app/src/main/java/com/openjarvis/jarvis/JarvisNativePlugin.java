@@ -155,29 +155,50 @@ public class JarvisNativePlugin extends Plugin implements RecognitionListener {
 
     @PluginMethod
     public void stopRecognition(PluginCall call) {
-        if (recognizer == null || !listening) {
-            call.reject("There is no active recording.", "NOT_RECORDING");
+        android.app.Activity activity = getActivity();
+        if (activity == null) {
+            call.reject("JARVIS is not attached to an active Android screen.", "ACTIVITY_UNAVAILABLE");
             return;
         }
-        stopCall = call;
-        stopping = true;
-        try {
-            recognizer.stopListening();
-        } catch (Exception e) {
-            failStop("Could not stop Android speech recognition.", e);
-        }
+        // SpeechRecognizer is a main-looper API. Capacitor bridge calls may
+        // arrive on a worker thread, so every lifecycle operation is posted
+        // to the UI thread to avoid vendor-ROM threading failures.
+        activity.runOnUiThread(() -> {
+            if (recognizer == null || !listening) {
+                call.reject("There is no active recording.", "NOT_RECORDING");
+                return;
+            }
+            if (stopCall != null) {
+                call.reject("A speech stop request is already in progress.", "STOP_ALREADY_PENDING");
+                return;
+            }
+            stopCall = call;
+            stopping = true;
+            try {
+                recognizer.stopListening();
+            } catch (Exception e) {
+                failStop("Could not stop Android speech recognition.", e);
+            }
+        });
     }
 
     @PluginMethod
     public void cancelRecognition(PluginCall call) {
-        stopping = true;
-        releaseRecognizer();
-        if (stopCall != null) {
-            stopCall.reject("Recording cancelled.", "CANCELLED");
-            stopCall = null;
+        android.app.Activity activity = getActivity();
+        if (activity == null) {
+            call.reject("JARVIS is not attached to an active Android screen.", "ACTIVITY_UNAVAILABLE");
+            return;
         }
-        transcript.setLength(0);
-        call.resolve();
+        activity.runOnUiThread(() -> {
+            stopping = true;
+            releaseRecognizer();
+            if (stopCall != null) {
+                stopCall.reject("Recording cancelled.", "CANCELLED");
+                stopCall = null;
+            }
+            transcript.setLength(0);
+            call.resolve();
+        });
     }
 
     @PluginMethod
@@ -487,11 +508,17 @@ public class JarvisNativePlugin extends Plugin implements RecognitionListener {
             return;
         }
         if (error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT) {
-            if (recognizer != null && listening) {
-                getActivity().runOnUiThread(() -> {
-                    try { recognizer.startListening(recognitionIntent); }
-                    catch (Exception e) { failStop("Speech recognition stopped unexpectedly.", e); }
+            android.app.Activity activity = getActivity();
+            if (recognizer != null && listening && activity != null) {
+                activity.runOnUiThread(() -> {
+                    try {
+                        if (recognizer != null && listening && !stopping) recognizer.startListening(recognitionIntent);
+                    } catch (Exception e) {
+                        failStop("Speech recognition stopped unexpectedly.", e);
+                    }
                 });
+            } else if (activity == null) {
+                failStop("JARVIS screen closed during speech recognition.", null);
             }
             return;
         }

@@ -2,6 +2,9 @@ package com.openjarvis.jarvis;
 
 import android.Manifest;
 import android.content.Intent;
+import android.content.IntentFilter;
+import android.media.AudioManager;
+import android.os.BatteryManager;
 import android.net.Uri;
 import android.os.Bundle;
 import android.provider.Settings;
@@ -175,6 +178,93 @@ public class JarvisNativePlugin extends Plugin implements RecognitionListener {
             call.resolve();
         } catch (Exception e) {
             call.reject("Could not open Android app permissions.", "SETTINGS_OPEN_FAILED", e);
+        }
+    }
+
+    @PluginMethod
+    public void openSystemPanel(PluginCall call) {
+        String panel = call.getString("panel", "");
+        String action;
+        switch (panel) {
+            case "wifi": action = Settings.ACTION_WIFI_SETTINGS; break;
+            case "bluetooth": action = Settings.ACTION_BLUETOOTH_SETTINGS; break;
+            case "display": action = Settings.ACTION_DISPLAY_SETTINGS; break;
+            case "sound": action = Settings.ACTION_SOUND_SETTINGS; break;
+            case "battery": action = Settings.ACTION_BATTERY_SAVER_SETTINGS; break;
+            case "location": action = Settings.ACTION_LOCATION_SOURCE_SETTINGS; break;
+            case "app_settings":
+                openAppSettings(call);
+                return;
+            default:
+                call.reject("That Android settings panel is not supported.", "UNSUPPORTED_SETTINGS_PANEL");
+                return;
+        }
+        try {
+            Intent intent = new Intent(action);
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            getContext().startActivity(intent);
+            call.resolve();
+        } catch (Exception e) {
+            call.reject("Could not open the requested Android settings panel.", "SETTINGS_PANEL_FAILED", e);
+        }
+    }
+
+    @PluginMethod
+    public void launchApp(PluginCall call) {
+        String packageName = call.getString("packageName", "").trim();
+        if (packageName.isEmpty() || packageName.length() > 200) {
+            call.reject("A valid Android package name is required.", "INVALID_PACKAGE_NAME");
+            return;
+        }
+        try {
+            Intent intent = getContext().getPackageManager().getLaunchIntentForPackage(packageName);
+            if (intent == null) {
+                call.reject("That app is not installed or cannot be launched.", "APP_NOT_FOUND");
+                return;
+            }
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            getContext().startActivity(intent);
+            call.resolve();
+        } catch (Exception e) {
+            call.reject("Could not launch that app.", "APP_LAUNCH_FAILED", e);
+        }
+    }
+
+    @PluginMethod
+    public void setMediaVolume(PluginCall call) {
+        double requested = call.getDouble("percent", -1.0);
+        if (requested < 0 || requested > 100) {
+            call.reject("Volume must be between 0 and 100.", "INVALID_VOLUME");
+            return;
+        }
+        try {
+            AudioManager audio = (AudioManager) getContext().getSystemService(android.content.Context.AUDIO_SERVICE);
+            int maximum = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
+            int value = (int) Math.round(maximum * requested / 100.0);
+            audio.setStreamVolume(AudioManager.STREAM_MUSIC, value, 0);
+            int actual = audio.getStreamVolume(AudioManager.STREAM_MUSIC);
+            int percent = maximum == 0 ? 0 : Math.round(actual * 100f / maximum);
+            call.resolve(new JSObject().put("percent", percent));
+        } catch (Exception e) {
+            call.reject("Could not change media volume.", "VOLUME_CHANGE_FAILED", e);
+        }
+    }
+
+    @PluginMethod
+    public void getBatteryStatus(PluginCall call) {
+        try {
+            Intent battery = getContext().registerReceiver(null, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
+            if (battery == null) throw new IllegalStateException("Battery status is unavailable.");
+            int level = battery.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
+            int scale = battery.getIntExtra(BatteryManager.EXTRA_SCALE, -1);
+            int status = battery.getIntExtra(BatteryManager.EXTRA_STATUS, -1);
+            if (level < 0 || scale <= 0) throw new IllegalStateException("Battery level is unavailable.");
+            int percent = Math.round(level * 100f / scale);
+            boolean charging = status == BatteryManager.BATTERY_STATUS_CHARGING ||
+                status == BatteryManager.BATTERY_STATUS_FULL;
+            call.resolve(new JSObject().put("percent", percent).put("charging", charging));
+        } catch (Exception e) {
+            call.reject("Could not read battery status.", "BATTERY_STATUS_FAILED", e);
         }
     }
 

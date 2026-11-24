@@ -174,7 +174,7 @@ async function handleNeedleResult(raw: string): Promise<string> {
   const calls = Array.isArray(parsed.function_calls) ? parsed.function_calls : [];
   const confidence = Number(parsed.confidence ?? 0);
   if (calls.length === 0) {
-    return "I'm online. Needle 3 is running locally. I act as JARVIS's tool-routing model: I select an available action and prepare its arguments. For normal conversation, choose your JARVIS chat model.";
+    return "Needle 3 is running locally, but it is JARVIS's tool router, not its conversational AI. No Android action was needed for this request. Select an installed chat model for a conversation. JARVIS Core local chat is not yet installed.";
   }
   if (confidence < 0.85) {
     // Low-confidence tool predictions are not user-facing failures. Needle is

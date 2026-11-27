@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { Send, Square, Paperclip, Search, Mic } from 'lucide-react';
+import { Send, Square, Paperclip, Search, Mic, Brain } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAppStore, generateId } from '../../lib/store';
 import { streamChat, streamResearch } from '../../lib/sse';
@@ -15,6 +15,7 @@ import {
   resolveChatEngine,
 } from '../../lib/chat-telemetry';
 import { MicButton } from './MicButton';
+import { useNavigate } from 'react-router';
 import { useSpeech } from '../../hooks/useSpeech';
 import type {
   ChatMessage,
@@ -250,6 +251,7 @@ async function handleNeedleResult(raw: string): Promise<string> {
 }
 
 export function InputArea() {
+  const navigate = useNavigate();
   const [input, setInput] = useState('');
   const [attachments, setAttachments] = useState<File[]>([]);
   const [wakeModeEnabled, setWakeModeEnabled] = useState(false);
@@ -992,7 +994,7 @@ export function InputArea() {
       if (!active || !text || wakeCommandPendingRef.current) return;
       // Word boundary must be a single regex escape. A doubled slash only
       // matches a literal backslash and silently breaks the wake phrase.
-      const match = text.match(/^(?:hello|hey)\s+jarvis\b[,.! ]*/i);
+      const match = text.match(/\b(?:hello|hey)[\s,]+jarvis\b[\s,!.]*/i);
       if (!match) return;
       const command = text.slice(match[0].length).trim() || 'Hello';
       wakeCommandPendingRef.current = true;
@@ -1049,6 +1051,17 @@ export function InputArea() {
               title={wakeModeEnabled ? 'Disable hands-free wake listening' : 'Enable hands-free wake listening'}
             >
               <Mic size={12} /> {wakeModeEnabled ? 'Wake Mode On' : 'Wake Mode'}
+            </button>
+          )}
+          {isAndroidNative() && (
+            <button
+              type="button"
+              onClick={() => navigate('/dashboard')}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs transition-colors cursor-pointer"
+              style={{ background: 'transparent', border: '1px solid var(--color-border)', color: 'var(--color-text-tertiary)' }}
+              title="Open Dashboard to install the local Qwen3 1.7B chat model"
+            >
+              <Brain size={12} /> Install Qwen3 AI
             </button>
           )}
           <button

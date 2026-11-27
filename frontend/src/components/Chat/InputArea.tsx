@@ -359,8 +359,8 @@ export function InputArea() {
       ? [input.trim(), recognizedText.trim()].filter(Boolean).join(' ')
       : input.trim();
     const content = textContent || (filesToSend.length ? 'Please analyze the attached media.' : '');
-    const rememberMatch = content.match(/^(?:please\\s+)?remember(?:\\s+that)?\\s+(.+)$/i);
-    const forgetMatch = content.match(/^(?:please\\s+)?forget(?:\\s+that)?\\s+(.+)$/i);
+    const rememberMatch = content.match(/^(?:please\s+)?remember(?:\s+that)?\s+(.+)$/i);
+    const forgetMatch = content.match(/^(?:please\s+)?forget(?:\s+that)?\s+(.+)$/i);
     const memoryAction = rememberMatch ? { type: 'remember' as const, text: rememberMatch[1].trim() }
       : forgetMatch ? { type: 'forget' as const, text: forgetMatch[1].trim() } : null;
     if ((!content && filesToSend.length === 0) || streamState.isStreaming) return;
@@ -950,7 +950,7 @@ export function InputArea() {
     let listener: { remove: () => Promise<void> } | null = null;
     JarvisNative.addListener('speechResult', ({ text }) => {
       if (!active || !text) return;
-      const match = text.match(/^(?:hello|hey)\\s+jarvis\\b[,.! ]*/i);
+      const match = text.match(/^(?:hello|hey)\s+jarvis\\b[,.! ]*/i);
       if (!match) return;
       const command = text.slice(match[0].length).trim() || 'Hello';
       void (async () => {

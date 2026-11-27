@@ -121,7 +121,7 @@ export function DashboardPage() {
         <section className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <div className="rounded-2xl border p-4" style={{ background: 'var(--color-surface)', borderColor: 'var(--color-border)' }}>
             <div className="mb-2 flex items-center gap-2 text-xs" style={{ color: 'var(--color-text-secondary)' }}><Cpu size={15} /> CONVERSATION MODEL</div>
-            <div className="truncate text-sm font-semibold" style={{ color: 'var(--color-text)' }}>{model?.name || selectedModel || 'Not selected'}</div>
+            <div className="truncate text-sm font-semibold" style={{ color: 'var(--color-text)' }}>{model?.id || selectedModel || 'Not selected'}</div>
             <p className="mt-1 text-xs" style={{ color: 'var(--color-text-tertiary)' }}>{modelLoading ? 'Loading model…' : coreReady ? 'Selected model available to chat' : isRouter ? 'Needle 3 is a tool router, not the chat brain' : 'Choose a conversational model in Chat'}</p>
           </div>
           <div className="rounded-2xl border p-4" style={{ background: 'var(--color-surface)', borderColor: 'var(--color-border)' }}>

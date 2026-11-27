@@ -75,6 +75,18 @@ jobs:
           mkdir -p artifacts
           cp "$ENGINE_DIR/needle3.cact" artifacts/needle3.cact
 
+      - name: Download pinned Cactus conversational runtime and matching ABI header
+        run: |
+          CACTUS_COMMIT="89599df65d1a80c7248d1eafca305f0a4ab09090"
+          mkdir -p frontend/android/app/src/main/jniLibs/arm64-v8a
+          mkdir -p frontend/android/app/src/main/cpp/cactus_flutter_include
+          BASE="https://raw.githubusercontent.com/cactus-compute/cactus-flutter/$CACTUS_COMMIT"
+          curl -fL --retry 3 "$BASE/android/src/main/jniLibs/arm64-v8a/libcactus.so" -o frontend/android/app/src/main/jniLibs/arm64-v8a/libcactus.so
+          curl -fL --retry 3 "$BASE/ios/cactus.xcframework/ios-arm64/cactus.framework/Headers/cactus_ffi.h" -o frontend/android/app/src/main/cpp/cactus_flutter_include/cactus_ffi.h
+          test -s frontend/android/app/src/main/jniLibs/arm64-v8a/libcactus.so
+          grep -q 'cactus_init(const char\* model_path, size_t context_size, const char\* corpus_dir)' frontend/android/app/src/main/cpp/cactus_flutter_include/cactus_ffi.h
+          sha256sum frontend/android/app/src/main/jniLibs/arm64-v8a/libcactus.so
+
       - name: Install frontend dependencies
         working-directory: frontend
         run: npm ci

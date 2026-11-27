@@ -64,9 +64,18 @@ public class JarvisNativePlugin extends Plugin implements RecognitionListener {
     private PluginCall ttsCall;
     private String ttsUtteranceId;
 
+    private final android.content.BroadcastReceiver wakeReceiver = new android.content.BroadcastReceiver() {
+        @Override public void onReceive(android.content.Context context, Intent intent) {
+            notifyListeners("wakeDetected", new JSObject().put("detected", true));
+        }
+    };
+
     @Override
     public void load() {
         super.load();
+        android.content.IntentFilter wakeFilter = new android.content.IntentFilter(WakeWordService.ACTION_WAKE_DETECTED);
+        if (Build.VERSION.SDK_INT >= 33) getContext().registerReceiver(wakeReceiver, wakeFilter, android.content.Context.RECEIVER_NOT_EXPORTED);
+        else getContext().registerReceiver(wakeReceiver, wakeFilter);
         tts = new TextToSpeech(getContext(), status -> {
             ttsReady = status == TextToSpeech.SUCCESS;
             if (ttsReady) {
@@ -85,6 +94,69 @@ public class JarvisNativePlugin extends Plugin implements RecognitionListener {
                 });
             }
         });
+    }
+
+    @PluginMethod
+    public void isWakeWordEnabled(PluginCall call) {
+        android.content.SharedPreferences prefs = getContext().getSharedPreferences("jarvis_wake_settings", 0);
+        call.resolve(new JSObject().put("enabled", prefs.getBoolean("enabled", false)));
+    }
+
+    @PluginMethod
+    public void enableWakeWord(PluginCall call) {
+        if (getPermissionState("microphone") != PermissionState.GRANTED) {
+            requestPermissionForAlias("microphone", call, "wakeWordPermissionResult");
+            return;
+        }
+        startWakeWordService(call);
+    }
+
+    @PermissionCallback
+    private void wakeWordPermissionResult(PluginCall call) {
+        if (getPermissionState("microphone") != PermissionState.GRANTED) {
+            call.reject("Microphone permission is required for wake word listening.", "MICROPHONE_PERMISSION_DENIED");
+            return;
+        }
+        startWakeWordService(call);
+    }
+
+    private void startWakeWordService(PluginCall call) {
+        try {
+            Intent intent = new Intent(getContext(), WakeWordService.class);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) getContext().startForegroundService(intent);
+            else getContext().startService(intent);
+            getContext().getSharedPreferences("jarvis_wake_settings", 0).edit().putBoolean("enabled", true).apply();
+            call.resolve(new JSObject().put("enabled", true));
+        } catch (Exception e) {
+            call.reject("Could not enable the JARVIS wake word service. Check Android microphone permissions.", "WAKE_SERVICE_START_FAILED", e);
+        }
+    }
+
+    @PluginMethod
+    public void disableWakeWord(PluginCall call) {
+        try {
+            getContext().stopService(new Intent(getContext(), WakeWordService.class));
+            getContext().getSharedPreferences("jarvis_wake_settings", 0).edit().putBoolean("enabled", false).apply();
+            call.resolve(new JSObject().put("enabled", false));
+        } catch (Exception e) {
+            call.reject("Could not disable JARVIS wake word listening.", "WAKE_SERVICE_STOP_FAILED", e);
+        }
+    }
+
+    @PluginMethod
+    public void pauseWakeWord(PluginCall call) {
+        Intent intent = new Intent(getContext(), WakeWordService.class).setAction(WakeWordService.ACTION_PAUSE);
+        getContext().startService(intent);
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void resumeWakeWord(PluginCall call) {
+        android.content.SharedPreferences prefs = getContext().getSharedPreferences("jarvis_wake_settings", 0);
+        if (!prefs.getBoolean("enabled", false)) { call.resolve(); return; }
+        Intent intent = new Intent(getContext(), WakeWordService.class).setAction(WakeWordService.ACTION_RESUME);
+        getContext().startService(intent);
+        call.resolve();
     }
 
     @PluginMethod
@@ -624,6 +696,7 @@ public class JarvisNativePlugin extends Plugin implements RecognitionListener {
 
     @Override
     protected void handleOnDestroy() {
+        try { getContext().unregisterReceiver(wakeReceiver); } catch (Exception ignored) {}
         releaseRecognizer();
         if (tts != null) { tts.stop(); tts.shutdown(); tts = null; }
         if (ttsCall != null) { ttsCall.reject("App closed.", "INTERRUPTED"); ttsCall = null; }

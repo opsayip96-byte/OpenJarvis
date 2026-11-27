@@ -44,7 +44,7 @@ Java_com_openjarvis_jarvis_JarvisCoreNativePlugin_nativeInitialize(
     model_handle = cactus_init(path.c_str(), safe_context, nullptr);
     if (!model_handle) {
         const char* nativeError = cactus_get_last_error();
-        const std::string detail = nativeError && nativeError[0] != '\\0'
+        const std::string detail = nativeError && nativeError[0] != '\0'
             ? std::string(nativeError)
             : std::string("Cactus returned a null model handle without an error message.");
         throwJava(env, "Cactus model initialization failed: " + detail);

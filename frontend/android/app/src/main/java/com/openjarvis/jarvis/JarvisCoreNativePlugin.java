@@ -84,6 +84,32 @@ public class JarvisCoreNativePlugin extends Plugin {
         return total;
     }
 
+    private File findCactModel(File directory) {
+        if (directory == null || !directory.exists()) return null;
+        if (directory.isFile()) {
+            return directory.getName().toLowerCase(java.util.Locale.ROOT).endsWith(".cact")
+                && directory.length() > 50L * 1024L * 1024L ? directory : null;
+        }
+        File[] children = directory.listFiles();
+        if (children == null) return null;
+        for (File child : children) {
+            File found = findCactModel(child);
+            if (found != null) return found;
+        }
+        return null;
+    }
+
+    private boolean hasValidCactModel(File directory) {
+        File model = findCactModel(directory);
+        if (model == null) return false;
+        try (InputStream input = new FileInputStream(model)) {
+            return input.read() == 'C' && input.read() == 'A'
+                && input.read() == 'C' && input.read() == 'T';
+        } catch (Exception error) {
+            return false;
+        }
+    }
+
     @PluginMethod
     public void getStatus(PluginCall call) {
         final String slug;
@@ -93,7 +119,7 @@ public class JarvisCoreNativePlugin extends Plugin {
         long bytes = directoryBytes(model);
         JSObject result = new JSObject();
         result.put("nativeAvailable", nativeAvailable);
-        result.put("modelDownloaded", model.isDirectory() && bytes > 50L * 1024L * 1024L);
+        result.put("modelDownloaded", hasValidCactModel(model));
         result.put("modelBytes", bytes);
         result.put("modelLoaded", modelLoaded && slug.equals(modelLoadedSlug));
         result.put("modelSlug", slug);
@@ -115,10 +141,13 @@ public class JarvisCoreNativePlugin extends Plugin {
             HttpURLConnection downloadConnection = null;
             try {
                 if (!nativeAvailable) throw new IllegalStateException("The on-device Cactus runtime is missing from this APK.");
-                if (target.isDirectory() && directoryBytes(target) > 50L * 1024L * 1024L) {
+                if (hasValidCactModel(target)) {
                     call.resolve(new JSObject().put("downloaded", true).put("bytes", directoryBytes(target)).put("modelSlug", slug));
                     return;
                 }
+                // A previous app version accepted any large extracted folder.
+                // Remove that false-positive installation before a clean download.
+                if (target.exists()) deleteRecursively(target);
                 if (!models.exists() && !models.mkdirs()) throw new IllegalStateException("Cannot create the model storage directory.");
 
                 String downloadUrl;
@@ -194,8 +223,8 @@ public class JarvisCoreNativePlugin extends Plugin {
                 if (!staging.mkdirs()) throw new IllegalStateException("Could not prepare the model extraction directory.");
                 extractModelZip(zip, staging);
                 long extractedBytes = directoryBytes(staging);
-                if (extractedBytes < 50L * 1024L * 1024L) {
-                    throw new IllegalStateException("The downloaded model archive is incomplete or empty.");
+                if (extractedBytes < 50L * 1024L * 1024L || !hasValidCactModel(staging)) {
+                    throw new IllegalStateException("The downloaded archive does not contain a valid CACT model file. The old model has not been installed.");
                 }
                 if (target.exists()) deleteRecursively(target);
                 if (!staging.renameTo(target)) throw new IllegalStateException("Could not move the verified model into its final location.");
@@ -318,10 +347,11 @@ public class JarvisCoreNativePlugin extends Plugin {
         WORKER.execute(() -> {
             try {
                 if (!nativeAvailable) throw new IllegalStateException("Cactus native runtime is unavailable.");
-                if (!modelDirectory(slug).isDirectory() || directoryBytes(modelDirectory(slug)) < 50L * 1024L * 1024L) {
-                    throw new IllegalStateException("Download " + slug + " before loading it.");
+                File modelFile = findCactModel(modelDirectory(slug));
+                if (modelFile == null || !hasValidCactModel(modelDirectory(slug))) {
+                    throw new IllegalStateException("The installed model is not a valid CACT file. Remove the old download and install it again.");
                 }
-                boolean loaded = nativeInitialize(modelDirectory(slug).getAbsolutePath(), call.getInt("contextSize", 4096));
+                boolean loaded = nativeInitialize(modelFile.getAbsolutePath(), call.getInt("contextSize", 4096));
                 modelLoaded = loaded;
                 modelLoadedSlug = loaded ? slug : null;
                 call.resolve(new JSObject().put("loaded", loaded).put("model", slug));
@@ -342,8 +372,11 @@ public class JarvisCoreNativePlugin extends Plugin {
             List<File> temporaryImages = new ArrayList<>();
             try {
                 if (!modelLoaded || !slug.equals(modelLoadedSlug)) {
-                    if (!modelDirectory(slug).isDirectory()) throw new IllegalStateException("Download " + slug + " before chatting with it.");
-                    boolean loaded = nativeInitialize(modelDirectory(slug).getAbsolutePath(), 4096);
+                    File modelFile = findCactModel(modelDirectory(slug));
+                    if (modelFile == null || !hasValidCactModel(modelDirectory(slug))) {
+                        throw new IllegalStateException("Download a valid " + slug + " CACT model before chatting with it.");
+                    }
+                    boolean loaded = nativeInitialize(modelFile.getAbsolutePath(), 4096);
                     modelLoaded = loaded;
                     modelLoadedSlug = loaded ? slug : null;
                 }

@@ -9,6 +9,7 @@ import { serializeToolCallArguments } from '../../lib/tool-call';
 import { NeedleNative } from '../../lib/needle-native';
 import { isAndroidNative, JarvisNative, JarvisCoreNative, JARVIS_CORE_MODEL_ID, JARVIS_VISION_MODEL_ID, JARVIS_CORE_MODEL_SLUG, JARVIS_VISION_MODEL_SLUG } from '../../lib/android-native';
 import { buildLocalMemoryPrompt, rememberLocalFact, forgetLocalFact, getLocalMemories } from '../../lib/local-memory';
+import { getLocalAgentPrompt } from '../../lib/local-agents';
 import {
   engineFromCompletionChunk,
   resolveChatEngine,
@@ -579,6 +580,8 @@ export function InputArea() {
         const localMessages = [...apiMessages];
         const savedMemory = buildLocalMemoryPrompt();
         if (savedMemory) localMessages.unshift({ role: 'system', content: savedMemory });
+        const specialist = getLocalAgentPrompt(content);
+        if (specialist) localMessages.unshift({ role: 'system', content: specialist.prompt + ' The user prefixed this request with @' + specialist.name + '. Treat that prefix as a mode selector, not part of the requested output.' });
         const result = await JarvisCoreNative.complete({
           modelSlug: jarvisModelSlug,
           messages: JSON.stringify(localMessages),

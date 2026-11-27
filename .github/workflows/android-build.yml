@@ -75,14 +75,6 @@ jobs:
           mkdir -p artifacts
           cp "$ENGINE_DIR/needle3.cact" artifacts/needle3.cact
 
-      - name: Download pinned Cactus conversational runtime
-        run: |
-          mkdir -p frontend/android/app/src/main/jniLibs/arm64-v8a
-          CACTUS_BASE="https://raw.githubusercontent.com/cactus-compute/cactus-flutter/89599df65d1a80c7248d1eafca305f0a4ab09090/android/src/main/jniLibs/arm64-v8a"
-          curl -fL --retry 3 "$CACTUS_BASE/libcactus.so" -o frontend/android/app/src/main/jniLibs/arm64-v8a/libcactus.so
-          test "$(git hash-object frontend/android/app/src/main/jniLibs/arm64-v8a/libcactus.so)" = "95831cf0aa432d2e30b7b69072265d8e80e3a64e"
-          ls -lh frontend/android/app/src/main/jniLibs/arm64-v8a/libcactus.so
-
       - name: Install frontend dependencies
         working-directory: frontend
         run: npm ci

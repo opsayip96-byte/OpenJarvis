@@ -8,6 +8,7 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(JarvisNativePlugin.class);
         registerPlugin(NeedleNativePlugin.class);
+        registerPlugin(JarvisCoreNativePlugin.class);
         super.onCreate(savedInstanceState);
     }
 }

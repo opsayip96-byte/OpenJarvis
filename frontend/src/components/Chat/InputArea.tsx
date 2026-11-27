@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { Send, Square, Paperclip, Search } from 'lucide-react';
+import { Send, Square, Paperclip, Search, Mic } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAppStore, generateId } from '../../lib/store';
 import { streamChat, streamResearch } from '../../lib/sse';
@@ -252,6 +252,8 @@ async function handleNeedleResult(raw: string): Promise<string> {
 export function InputArea() {
   const [input, setInput] = useState('');
   const [attachments, setAttachments] = useState<File[]>([]);
+  const [wakeModeEnabled, setWakeModeEnabled] = useState(false);
+  const wakeCommandPendingRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -322,6 +324,26 @@ export function InputArea() {
       });
     }
   }, [speechError, speechPermissionDenied, openPermissionSettings]);
+
+  const handleWakeModeToggle = useCallback(async () => {
+    if (wakeModeEnabled) {
+      setWakeModeEnabled(false);
+      wakeCommandPendingRef.current = false;
+      await cancelRecording();
+      return;
+    }
+    if (!isAndroidNative()) {
+      toast.error('Wake Mode is currently supported in the Android app only.');
+      return;
+    }
+    try {
+      await startRecording();
+      setWakeModeEnabled(true);
+      toast.success('Wake Mode active. Say “Hello JARVIS” followed by your request.');
+    } catch {
+      toast.error('Could not start Wake Mode. Check microphone permission and Android speech recognition.');
+    }
+  }, [wakeModeEnabled, cancelRecording, startRecording]);
 
   const handleMicClick = useCallback(async () => {
     if (speechState === 'recording') {
@@ -963,29 +985,43 @@ export function InputArea() {
   // "Hello JARVIS" wake phrase and submit the words that follow it. This is
   // foreground, tap-to-enable listening, not an always-on background mic.
   useEffect(() => {
-    if (!isAndroidNative()) return;
+    if (!isAndroidNative() || !wakeModeEnabled) return;
     let active = true;
     let listener: { remove: () => Promise<void> } | null = null;
     JarvisNative.addListener('speechResult', ({ text }) => {
-      if (!active || !text) return;
-      const match = text.match(/^(?:hello|hey)\s+jarvis\\b[,.! ]*/i);
+      if (!active || !text || wakeCommandPendingRef.current) return;
+      // Word boundary must be a single regex escape. A doubled slash only
+      // matches a literal backslash and silently breaks the wake phrase.
+      const match = text.match(/^(?:hello|hey)\s+jarvis\b[,.! ]*/i);
       if (!match) return;
       const command = text.slice(match[0].length).trim() || 'Hello';
+      wakeCommandPendingRef.current = true;
       void (async () => {
-        await cancelRecording();
-        await sendRecognizedSpeechRef.current(command);
+        try {
+          await cancelRecording();
+          await sendRecognizedSpeechRef.current(command);
+        } catch (error) {
+          console.warn('JARVIS wake request failed:', error);
+        } finally {
+          wakeCommandPendingRef.current = false;
+          if (active && wakeModeEnabled) {
+            try { await startRecording(); }
+            catch (error) { console.warn('JARVIS could not resume Wake Mode:', error); }
+          }
+        }
       })();
     }).then((handle) => {
       if (active) listener = handle;
       else void handle.remove();
     }).catch((error) => {
       console.warn('JARVIS wake phrase listener could not start:', error);
+      toast.error('Wake Mode listener could not start.');
     });
     return () => {
       active = false;
       if (listener) void listener.remove();
     };
-  }, [cancelRecording]);
+  }, [cancelRecording, startRecording, wakeModeEnabled]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -997,7 +1033,24 @@ export function InputArea() {
   return (
     <div className="chat-input-safe-area px-4 pb-4 pt-2" style={{ maxWidth: 'var(--chat-max-width)', margin: '0 auto', width: '100%' }}>
       <div className="mb-2 flex flex-col gap-1">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          {isAndroidNative() && (
+            <button
+              type="button"
+              onClick={() => void handleWakeModeToggle()}
+              disabled={streamState.isStreaming && !wakeModeEnabled}
+              aria-pressed={wakeModeEnabled}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs transition-colors cursor-pointer disabled:opacity-50"
+              style={{
+                background: wakeModeEnabled ? 'var(--color-accent-subtle)' : 'transparent',
+                border: `1px solid ${wakeModeEnabled ? 'var(--color-accent)' : 'var(--color-border)'}`,
+                color: wakeModeEnabled ? 'var(--color-accent)' : 'var(--color-text-tertiary)',
+              }}
+              title={wakeModeEnabled ? 'Disable hands-free wake listening' : 'Enable hands-free wake listening'}
+            >
+              <Mic size={12} /> {wakeModeEnabled ? 'Wake Mode On' : 'Wake Mode'}
+            </button>
+          )}
           <button
             type="button"
             onClick={() => setDeepResearch(!deepResearch)}

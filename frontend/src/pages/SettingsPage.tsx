@@ -447,6 +447,8 @@ export function SettingsPage() {
   const [androidApiKeyError, setAndroidApiKeyError] = useState('');
   const [androidVoices, setAndroidVoices] = useState<AndroidVoice[]>([]);
   const [androidVoiceError, setAndroidVoiceError] = useState('');
+  const [wakeWordEnabled, setWakeWordEnabled] = useState(false);
+  const [wakeWordError, setWakeWordError] = useState('');
   const [ttsLanguage, setTtsLanguage] = useState(() => {
     try { return localStorage.getItem('openjarvis-tts-language') || 'en-GB'; } catch { return 'en-GB'; }
   });
@@ -463,6 +465,9 @@ export function SettingsPage() {
         setAndroidVoiceError(voices.length ? '' : 'No offline Android voices are installed. Add a voice in Android Text-to-speech settings.');
       })
       .catch((error) => setAndroidVoiceError(error instanceof Error ? error.message : 'Android speech engine unavailable.'));
+    JarvisNative.isWakeWordEnabled()
+      .then(({ enabled }) => setWakeWordEnabled(enabled))
+      .catch(() => setWakeWordEnabled(false));
   }, [androidApp]);
 
   const saveAndroidApiKey = useCallback(async () => {
@@ -1046,6 +1051,40 @@ export function SettingsPage() {
 
           {/* Speech */}
           <Section title={androidApp ? 'Speech & Voice Studio' : 'Speech'}>
+            {androidApp && (
+              <SettingRow
+                label="Always Ready Wake Word"
+                description="Listen for “Hello JARVIS” while the screen is on, even when another app is open. Pauses when the screen turns off. A persistent Android notification is shown while enabled."
+              >
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    aria-label={wakeWordEnabled ? 'Disable wake word' : 'Enable wake word'}
+                    aria-pressed={wakeWordEnabled}
+                    onClick={async () => {
+                      setWakeWordError('');
+                      try {
+                        if (wakeWordEnabled) {
+                          await JarvisNative.disableWakeWord();
+                          setWakeWordEnabled(false);
+                        } else {
+                          await JarvisNative.enableWakeWord();
+                          setWakeWordEnabled(true);
+                        }
+                      } catch (error) {
+                        setWakeWordError(error instanceof Error ? error.message : 'Could not change wake word setting.');
+                      }
+                    }}
+                    className="relative w-11 h-6 rounded-full transition-colors cursor-pointer"
+                    style={{ background: wakeWordEnabled ? 'var(--color-accent)' : 'var(--color-bg-tertiary)' }}
+                  >
+                    <span className="absolute top-0.5 left-0.5 w-5 h-5 rounded-full transition-transform bg-white"
+                      style={{ transform: wakeWordEnabled ? 'translateX(20px)' : 'translateX(0)', boxShadow: '0 1px 3px rgba(0,0,0,0.2)' }} />
+                  </button>
+                </div>
+              </SettingRow>
+            )}
+            {androidApp && wakeWordError && <p role="alert" className="text-xs py-2" style={{ color: 'var(--color-error)' }}>{wakeWordError}</p>}
             <SettingRow label="Speech-to-Text" description="Enable microphone input for voice dictation">
               <button
                 onClick={() => { updateSettings({ speechEnabled: !settings.speechEnabled }); showSaved(); }}

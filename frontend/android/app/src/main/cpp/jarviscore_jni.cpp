@@ -75,9 +75,7 @@ Java_com_openjarvis_jarvis_JarvisCoreNativePlugin_nativeComplete(
         options.empty() ? nullptr : options.c_str(),
         nullptr,
         nullptr,
-        nullptr,
-        nullptr,
-        0
+        nullptr
     );
     if (result <= 0) {
         throwJava(env, "JARVIS Core inference failed. Native error code: " + std::to_string(result));

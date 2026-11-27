@@ -398,7 +398,7 @@ export function InputArea() {
     // Keep binary media out of local conversation storage. Attach the
     // processed frames only to this request payload.
     const currentMessages = useAppStore.getState().messages;
-    const apiMessages = currentMessages.map((m) => ({
+    const apiMessages: Array<{ role: string; content: string; images?: string[] }> = currentMessages.map((m) => ({
       role: m.role,
       content: m.content,
       ...(m.images?.length ? { images: m.images } : {}),

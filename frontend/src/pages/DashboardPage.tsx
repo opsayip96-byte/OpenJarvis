@@ -256,7 +256,7 @@ export function DashboardPage() {
             <div className="min-w-0">
               <div className="mb-1 flex items-center gap-2">
                 <Brain size={17} style={{ color: 'var(--color-accent)' }} />
-                <h2 className="text-base font-semibold" style={{ color: 'var(--color-text)' }}>JARVIS Core, on-device AI</h2>
+                <h2 className="text-base font-semibold" style={{ color: 'var(--color-text)' }}>JARVIS Core, Qwen3 1.7B chat AI</h2>
               </div>
               <p className="text-xs leading-5" style={{ color: 'var(--color-text-secondary)' }}>
                 Qwen3 1.7B runs locally through the Cactus Android runtime. First installation downloads about 1.1 GB. Chat history stays on this device for local conversations.

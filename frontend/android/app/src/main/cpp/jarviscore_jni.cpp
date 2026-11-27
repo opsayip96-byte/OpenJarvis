@@ -1,27 +1,10 @@
 #include <jni.h>
+#include "cactus.h"
 #include <cstddef>
 #include <cstdint>
 #include <mutex>
 #include <string>
 #include <vector>
-
-using cactus_model_t = void*;
-
-extern "C" {
-cactus_model_t cactus_init(const char* model_path, size_t context_size, const char* corpus_dir);
-int32_t cactus_complete(
-    cactus_model_t model,
-    const char* messages_json,
-    char* response_buffer,
-    size_t buffer_size,
-    const char* options_json,
-    const char* tools_json,
-    void* callback,
-    void* user_data
-);
-void cactus_destroy(cactus_model_t model);
-void cactus_reset(cactus_model_t model);
-}
 
 namespace {
 std::mutex model_mutex;
@@ -58,7 +41,7 @@ Java_com_openjarvis_jarvis_JarvisCoreNativePlugin_nativeInitialize(
     const size_t safe_context = static_cast<size_t>(
         contextSize < 1024 ? 1024 : (contextSize > 8192 ? 8192 : contextSize)
     );
-    model_handle = cactus_init(path.c_str(), safe_context, nullptr);
+    model_handle = cactus_init(path.c_str(), nullptr, false);
     if (!model_handle) {
         throwJava(env, "Cactus could not initialize JARVIS Core. Check that the model download is complete and compatible.");
         return JNI_FALSE;
@@ -92,7 +75,9 @@ Java_com_openjarvis_jarvis_JarvisCoreNativePlugin_nativeComplete(
         options.empty() ? nullptr : options.c_str(),
         nullptr,
         nullptr,
-        nullptr
+        nullptr,
+        nullptr,
+        0
     );
     if (result <= 0) {
         throwJava(env, "JARVIS Core inference failed. Native error code: " + std::to_string(result));

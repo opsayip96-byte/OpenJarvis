@@ -10,7 +10,8 @@ import {
   getCloudKeyStatus,
   saveCloudKey,
 } from '../lib/api';
-import { isAndroidNative } from '../lib/android-native';
+import { isAndroidNative, JarvisCoreNative, JARVIS_CORE_MODEL_ID, JARVIS_CORE_MODEL_SLUG, JARVIS_VISION_MODEL_ID, JARVIS_VISION_MODEL_SLUG } from '../lib/android-native';
+import { toast } from 'sonner';
 
 /** Popular models that users can download from the catalogue. */
 const CATALOGUE_MODELS = [
@@ -155,22 +156,42 @@ export function CommandPalette() {
 
   const handleSelect = async (modelId: string, owner?: string) => {
     const previousModel = selectedModel;
+    const isJarvisLocal = modelId === JARVIS_CORE_MODEL_ID || modelId === JARVIS_VISION_MODEL_ID;
+    if (isAndroidNative() && isJarvisLocal) {
+      const modelSlug = modelId === JARVIS_VISION_MODEL_ID ? JARVIS_VISION_MODEL_SLUG : JARVIS_CORE_MODEL_SLUG;
+      try {
+        const status = await JarvisCoreNative.getStatus({ modelSlug });
+        if (!status.nativeAvailable) throw new Error('The local JARVIS runtime is missing from this APK. Install the latest Android build.');
+        if (!status.modelDownloaded) {
+          toast.error('This JARVIS model is not installed yet. Open Dashboard and install it first.');
+          return;
+        }
+        if (!status.modelLoaded) {
+          await JarvisCoreNative.initializeModel({ modelSlug, contextSize: modelId === JARVIS_VISION_MODEL_ID ? 2048 : 4096 });
+        }
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Could not load the local JARVIS model.');
+        return;
+      }
+    }
+
     setSelectedModel(modelId);
     setCommandPaletteOpen(false);
-
     if (modelId !== previousModel) {
       const { setModelLoading, addLogEntry } = useAppStore.getState();
       setModelLoading(true);
       addLogEntry({ timestamp: Date.now(), level: 'info', category: 'model', message: `Switching to ${modelId}...` });
       try {
-        if (modelId === 'needle3-local') {
-          addLogEntry({ timestamp: Date.now(), level: 'info', category: 'model', message: 'Needle 3 uses its Android native runtime; no Ollama preload is needed.' });
+        if (modelId === 'needle3-local' || (isAndroidNative() && isJarvisLocal)) {
+          addLogEntry({ timestamp: Date.now(), level: 'info', category: 'model', message: `${modelId} uses its native Android runtime; no Ollama preload is needed.` });
         } else {
           await preloadModel(modelId, owner);
           addLogEntry({ timestamp: Date.now(), level: 'info', category: 'model', message: `${modelId} loaded` });
         }
       } catch (e: any) {
         addLogEntry({ timestamp: Date.now(), level: 'error', category: 'model', message: `Failed to load ${modelId}: ${e.message}` });
+        setSelectedModel(previousModel);
+        toast.error(`Could not load ${modelId}: ${e.message}`);
       } finally {
         setModelLoading(false);
       }

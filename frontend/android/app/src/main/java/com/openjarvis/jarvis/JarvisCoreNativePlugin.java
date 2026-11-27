@@ -1,0 +1,302 @@
+package com.openjarvis.jarvis;
+
+import android.os.StatFs;
+import com.getcapacitor.JSObject;
+import com.getcapacitor.Plugin;
+import com.getcapacitor.PluginCall;
+import com.getcapacitor.PluginMethod;
+import com.getcapacitor.annotation.CapacitorPlugin;
+
+import org.json.JSONObject;
+
+import java.io.BufferedInputStream;
+import java.io.BufferedOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
+
+@CapacitorPlugin(name = "JarvisCoreNative")
+public class JarvisCoreNativePlugin extends Plugin {
+    private static final String MODEL_SLUG = "qwen3-1.7b";
+    private static final String MODEL_API =
+        "https://vlqqczxwyaodtcdmdmlw.supabase.co/functions/v1/get-models?slug=qwen3-1.7b&sdk_name=flutter&sdk_version=1.3.0";
+    private static final String SUPABASE_ANON_KEY =
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZscXFjenh3eWFvZHRjZG1kbWx3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTE1MTg2MzIsImV4cCI6MjA2NzA5NDYzMn0.nBzqGuK9j6RZ6mOPWU2boAC_5H9XDs-fPpo5P3WZYbI";
+    private static final ExecutorService WORKER = Executors.newSingleThreadExecutor();
+    private static volatile boolean nativeAvailable = false;
+    private static volatile boolean modelLoaded = false;
+
+    private static native boolean nativeInitialize(String modelPath, int contextSize);
+    private static native String nativeComplete(String messagesJson, String optionsJson, int maxTokens);
+    private static native void nativeReset();
+    private static native void nativeUnload();
+
+    @Override
+    public void load() {
+        super.load();
+        try {
+            System.loadLibrary("cactus");
+            System.loadLibrary("jarviscore");
+            nativeAvailable = true;
+        } catch (UnsatisfiedLinkError error) {
+            nativeAvailable = false;
+        }
+    }
+
+    private File modelsDirectory() {
+        return new File(getContext().getFilesDir(), "models");
+    }
+
+    private File modelDirectory() {
+        return new File(modelsDirectory(), MODEL_SLUG);
+    }
+
+    private long directoryBytes(File directory) {
+        if (!directory.exists()) return 0;
+        if (directory.isFile()) return directory.length();
+        File[] children = directory.listFiles();
+        if (children == null) return 0;
+        long total = 0;
+        for (File child : children) total += directoryBytes(child);
+        return total;
+    }
+
+    @PluginMethod
+    public void getStatus(PluginCall call) {
+        File model = modelDirectory();
+        long bytes = directoryBytes(model);
+        JSObject result = new JSObject();
+        result.put("nativeAvailable", nativeAvailable);
+        result.put("modelDownloaded", model.isDirectory() && bytes > 50L * 1024L * 1024L);
+        result.put("modelBytes", bytes);
+        result.put("modelLoaded", modelLoaded);
+        result.put("modelSlug", MODEL_SLUG);
+        call.resolve(result);
+    }
+
+    @PluginMethod
+    public void downloadModel(PluginCall call) {
+        WORKER.execute(() -> {
+            File models = modelsDirectory();
+            File target = modelDirectory();
+            File zip = new File(models, MODEL_SLUG + ".zip.part");
+            File staging = new File(models, MODEL_SLUG + ".installing");
+            HttpURLConnection metadataConnection = null;
+            HttpURLConnection downloadConnection = null;
+            try {
+                if (!nativeAvailable) throw new IllegalStateException("The on-device Cactus runtime is missing from this APK.");
+                if (target.isDirectory() && directoryBytes(target) > 50L * 1024L * 1024L) {
+                    call.resolve(new JSObject().put("downloaded", true).put("bytes", directoryBytes(target)));
+                    return;
+                }
+                if (!models.exists() && !models.mkdirs()) throw new IllegalStateException("Cannot create the model storage directory.");
+
+                metadataConnection = (HttpURLConnection) new URL(MODEL_API).openConnection();
+                metadataConnection.setConnectTimeout(20000);
+                metadataConnection.setReadTimeout(30000);
+                metadataConnection.setRequestProperty("apikey", SUPABASE_ANON_KEY);
+                metadataConnection.setRequestProperty("Authorization", "Bearer " + SUPABASE_ANON_KEY);
+                int metadataStatus = metadataConnection.getResponseCode();
+                if (metadataStatus != HttpURLConnection.HTTP_OK) {
+                    throw new IllegalStateException("Model catalogue request failed (HTTP " + metadataStatus + ").");
+                }
+                JSONObject metadata = new JSONObject(readAll(metadataConnection.getInputStream()));
+                String downloadUrl = metadata.optString("download_url", "");
+                long expectedModelMb = metadata.optLong("size_mb", 1200);
+                if (downloadUrl.isEmpty()) throw new IllegalStateException("The Cactus catalogue did not return a model download URL.");
+                long requiredBytes = Math.max(900L * 1024L * 1024L, expectedModelMb * 1024L * 1024L);
+                StatFs stat = new StatFs(models.getAbsolutePath());
+                if (stat.getAvailableBytes() < requiredBytes + 300L * 1024L * 1024L) {
+                    throw new IllegalStateException("Not enough free storage. JARVIS Core needs about " + expectedModelMb + " MB plus temporary extraction space.");
+                }
+
+                downloadConnection = (HttpURLConnection) new URL(downloadUrl).openConnection();
+                downloadConnection.setInstanceFollowRedirects(true);
+                downloadConnection.setConnectTimeout(30000);
+                downloadConnection.setReadTimeout(180000);
+                downloadConnection.setRequestProperty("User-Agent", "OpenJarvis-Android/1.0");
+                int downloadStatus = downloadConnection.getResponseCode();
+                if (downloadStatus != HttpURLConnection.HTTP_OK) {
+                    throw new IllegalStateException("Model download failed (HTTP " + downloadStatus + ").");
+                }
+                long total = downloadConnection.getContentLengthLong();
+                try (InputStream input = new BufferedInputStream(downloadConnection.getInputStream());
+                     FileOutputStream fileOutput = new FileOutputStream(zip);
+                     BufferedOutputStream output = new BufferedOutputStream(fileOutput)) {
+                    byte[] buffer = new byte[1024 * 256];
+                    long received = 0;
+                    int count;
+                    while ((count = input.read(buffer)) != -1) {
+                        output.write(buffer, 0, count);
+                        received += count;
+                        if (total > 0) {
+                            notifyListeners("coreDownloadProgress", new JSObject()
+                                .put("progress", Math.min(1.0, (double) received / total))
+                                .put("receivedBytes", received)
+                                .put("totalBytes", total)
+                                .put("stage", "Downloading JARVIS Core"), true);
+                        }
+                    }
+                    output.flush();
+                    fileOutput.getFD().sync();
+                }
+
+                if (staging.exists()) deleteRecursively(staging);
+                if (!staging.mkdirs()) throw new IllegalStateException("Could not prepare the model extraction directory.");
+                extractModelZip(zip, staging);
+                long extractedBytes = directoryBytes(staging);
+                if (extractedBytes < 50L * 1024L * 1024L) {
+                    throw new IllegalStateException("The downloaded model archive is incomplete or empty.");
+                }
+                if (target.exists()) deleteRecursively(target);
+                if (!staging.renameTo(target)) throw new IllegalStateException("Could not move the verified model into its final location.");
+                zip.delete();
+                notifyListeners("coreDownloadProgress", new JSObject()
+                    .put("progress", 1.0).put("receivedBytes", extractedBytes)
+                    .put("totalBytes", extractedBytes).put("stage", "Model ready"), true);
+                call.resolve(new JSObject().put("downloaded", true).put("bytes", extractedBytes));
+            } catch (Exception error) {
+                zip.delete();
+                if (staging.exists()) deleteRecursively(staging);
+                call.reject("JARVIS Core download failed: " + error.getMessage(), "JARVIS_CORE_DOWNLOAD_FAILED", error);
+            } finally {
+                if (metadataConnection != null) metadataConnection.disconnect();
+                if (downloadConnection != null) downloadConnection.disconnect();
+            }
+        });
+    }
+
+    private void extractModelZip(File zipFile, File destination) throws Exception {
+        String rootFolder = null;
+        try (ZipInputStream zip = new ZipInputStream(new BufferedInputStream(new FileInputStream(zipFile)))) {
+            ZipEntry entry;
+            byte[] buffer = new byte[1024 * 128];
+            while ((entry = zip.getNextEntry()) != null) {
+                String name = entry.getName().replace('\\', '/');
+                if (name.startsWith("/") || name.contains("../") || name.equals("..")) {
+                    throw new IllegalStateException("Unsafe path in model archive.");
+                }
+                if (rootFolder == null) {
+                    int slash = name.indexOf('/');
+                    if (slash > 0 && (entry.isDirectory() || slash < name.length() - 1)) {
+                        rootFolder = name.substring(0, slash);
+                    }
+                }
+                String relative = name;
+                if (rootFolder != null && (relative.equals(rootFolder) || relative.startsWith(rootFolder + "/"))) {
+                    relative = relative.equals(rootFolder) ? "" : relative.substring(rootFolder.length() + 1);
+                }
+                if (relative.isEmpty()) {
+                    zip.closeEntry();
+                    continue;
+                }
+                File output = new File(destination, relative);
+                String base = destination.getCanonicalPath() + File.separator;
+                if (!output.getCanonicalPath().startsWith(base)) throw new IllegalStateException("Unsafe model archive path.");
+                if (entry.isDirectory()) {
+                    if (!output.exists() && !output.mkdirs()) throw new IllegalStateException("Could not create model directory.");
+                } else {
+                    File parent = output.getParentFile();
+                    if (!parent.exists() && !parent.mkdirs()) throw new IllegalStateException("Could not create model folder.");
+                    try (FileOutputStream stream = new FileOutputStream(output)) {
+                        int count;
+                        while ((count = zip.read(buffer)) != -1) stream.write(buffer, 0, count);
+                        stream.getFD().sync();
+                    }
+                }
+                zip.closeEntry();
+            }
+        }
+    }
+
+    private String readAll(InputStream input) throws Exception {
+        try (InputStream stream = input; java.io.ByteArrayOutputStream output = new java.io.ByteArrayOutputStream()) {
+            byte[] buffer = new byte[8192];
+            int count;
+            while ((count = stream.read(buffer)) != -1) output.write(buffer, 0, count);
+            return output.toString("UTF-8");
+        }
+    }
+
+    private void deleteRecursively(File file) {
+        if (file.isDirectory()) {
+            File[] children = file.listFiles();
+            if (children != null) for (File child : children) deleteRecursively(child);
+        }
+        file.delete();
+    }
+
+    @PluginMethod
+    public void initializeModel(PluginCall call) {
+        WORKER.execute(() -> {
+            try {
+                if (!nativeAvailable) throw new IllegalStateException("Cactus native runtime is unavailable.");
+                if (!modelDirectory().isDirectory() || directoryBytes(modelDirectory()) < 50L * 1024L * 1024L) {
+                    throw new IllegalStateException("Download JARVIS Core before loading it.");
+                }
+                boolean loaded = nativeInitialize(modelDirectory().getAbsolutePath(), call.getInt("contextSize", 4096));
+                modelLoaded = loaded;
+                call.resolve(new JSObject().put("loaded", loaded).put("model", MODEL_SLUG));
+            } catch (Exception error) {
+                modelLoaded = false;
+                call.reject("JARVIS Core initialization failed: " + error.getMessage(), "JARVIS_CORE_INIT_FAILED", error);
+            }
+        });
+    }
+
+    @PluginMethod
+    public void complete(PluginCall call) {
+        WORKER.execute(() -> {
+            try {
+                if (!modelLoaded) {
+                    boolean loaded = nativeInitialize(modelDirectory().getAbsolutePath(), 4096);
+                    modelLoaded = loaded;
+                }
+                String messages = call.getString("messages", "[]");
+                int maxTokens = Math.max(64, Math.min(1024, call.getInt("maxTokens", 384)));
+                double temperature = Math.max(0.0, Math.min(1.5, call.getDouble("temperature", 0.7)));
+                JSONObject options = new JSONObject();
+                options.put("max_tokens", maxTokens);
+                options.put("temperature", temperature);
+                options.put("top_p", 0.8);
+                options.put("top_k", 20);
+                options.put("enable_thinking_if_supported", false);
+                String raw = nativeComplete(messages, options.toString(), maxTokens);
+                JSONObject response = new JSONObject(raw);
+                boolean success = response.optBoolean("success", true);
+                if (!success) throw new IllegalStateException(response.optString("response", "Local inference failed."));
+                call.resolve(new JSObject()
+                    .put("response", response.optString("response", raw))
+                    .put("tokensPerSecond", response.optDouble("tokens_per_second", 0))
+                    .put("totalTimeMs", response.optDouble("total_time_ms", 0))
+                    .put("timeToFirstTokenMs", response.optDouble("time_to_first_token_ms", 0))
+                    .put("model", MODEL_SLUG));
+            } catch (Exception error) {
+                call.reject("JARVIS Core inference failed: " + error.getMessage(), "JARVIS_CORE_INFERENCE_FAILED", error);
+            }
+        });
+    }
+
+    @PluginMethod
+    public void reset(PluginCall call) {
+        WORKER.execute(() -> {
+            try { nativeReset(); call.resolve(); }
+            catch (Exception error) { call.reject("Could not reset JARVIS Core.", "JARVIS_CORE_RESET_FAILED", error); }
+        });
+    }
+
+    @PluginMethod
+    public void unload(PluginCall call) {
+        WORKER.execute(() -> {
+            try { nativeUnload(); modelLoaded = false; call.resolve(); }
+            catch (Exception error) { call.reject("Could not unload JARVIS Core.", "JARVIS_CORE_UNLOAD_FAILED", error); }
+        });
+    }
+}

@@ -1147,7 +1147,7 @@ class AgentConfig:
         "Warmth and emotion are communication style, not subjective feelings. "
         "Use available history and explicitly saved memories for continuity. "
         "Be clear about uncertainty, tool failures, and actual capabilities. "
-        "Prefer a configured local model when one is available, especially for private or offline tasks. Never assume a local model is installed. " 
+        "Prefer a configured local model when one is available, especially for private or offline tasks. Never assume a local model is installed. "
         "Never claim sentience or abilities you do not have."
     )
 

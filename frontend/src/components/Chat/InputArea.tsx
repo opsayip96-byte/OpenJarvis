@@ -8,7 +8,7 @@ import { listConnectors, getSyncStatus } from '../../lib/connectors-api';
 import { serializeToolCallArguments } from '../../lib/tool-call';
 import { NeedleNative } from '../../lib/needle-native';
 import { isAndroidNative, JarvisNative, JarvisCoreNative, JARVIS_CORE_MODEL_ID } from '../../lib/android-native';
-import { buildLocalMemoryPrompt, rememberLocalFact, forgetLocalFact } from '../../lib/local-memory';
+import { buildLocalMemoryPrompt, rememberLocalFact, forgetLocalFact, getLocalMemories } from '../../lib/local-memory';
 import {
   engineFromCompletionChunk,
   resolveChatEngine,
@@ -492,8 +492,9 @@ export function InputArea() {
           rememberLocalFact(memoryAction.text);
           accumulatedContent = "Certainly, Sir. I've saved that in JARVIS's private memory on this device.";
         } else {
+          const beforeCount = getLocalMemories().length;
           const remaining = forgetLocalFact(memoryAction.text);
-          accumulatedContent = remaining.length === getLocalMemories().length
+          accumulatedContent = remaining.length === beforeCount
             ? "I couldn't find a saved memory matching that description."
             : "I've removed the matching fact from JARVIS's local memory.";
         }

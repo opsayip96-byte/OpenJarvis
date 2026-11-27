@@ -129,10 +129,13 @@ export function CommandPalette() {
         ? models.filter((m) => m.id.toLowerCase().includes(query.toLowerCase()))
         : models)
     : tab === 'catalogue'
-    ? CATALOGUE_MODELS.filter((m) =>
-        !installedIds.has(m.id) &&
-        (!query || m.id.toLowerCase().includes(query.toLowerCase()) || m.desc.toLowerCase().includes(query.toLowerCase()))
-      )
+    ? (isAndroidNative()
+        ? [{ id: JARVIS_CORE_MODEL_ID, size: '~1.1 GB', desc: 'Qwen3 1.7B, JARVIS on-device chat AI' }]
+            .filter((m) => !query || 'qwen3-1.7b'.includes(query.toLowerCase()) || m.desc.toLowerCase().includes(query.toLowerCase()))
+        : CATALOGUE_MODELS.filter((m) =>
+            !installedIds.has(m.id) &&
+            (!query || m.id.toLowerCase().includes(query.toLowerCase()) || m.desc.toLowerCase().includes(query.toLowerCase()))
+          ))
     : []; // cloud tab doesn't use filtered
 
   useEffect(() => {
@@ -209,6 +212,16 @@ export function CommandPalette() {
     setPulling(modelId);
     setPullError(null);
     try {
+      if (isAndroidNative() && modelId === JARVIS_CORE_MODEL_ID) {
+        const status = await JarvisCoreNative.getStatus({ modelSlug: JARVIS_CORE_MODEL_SLUG });
+        if (!status.nativeAvailable) throw new Error('JARVIS Core runtime is missing. Install the latest Android APK.');
+        if (!status.modelDownloaded) await JarvisCoreNative.downloadModel({ modelSlug: JARVIS_CORE_MODEL_SLUG });
+        await JarvisCoreNative.initializeModel({ modelSlug: JARVIS_CORE_MODEL_SLUG, contextSize: 4096 });
+        setPullSuccess(modelId);
+        setSelectedModel(modelId);
+        toast.success('Qwen3 1.7B downloaded and loaded. JARVIS Core is ready.');
+        return;
+      }
       await pullModel(modelId);
       setPullSuccess(modelId);
       useAppStore.getState().addLogEntry({
@@ -297,7 +310,7 @@ export function CommandPalette() {
 
   const TAB_LABELS: Record<Tab, string> = {
     installed: `Installed Models (${models.length})`,
-    catalogue: 'Download',
+    catalogue: isAndroidNative() ? 'On-device AI' : 'Download',
     cloud: 'Cloud Models',
   };
 
@@ -467,7 +480,7 @@ export function CommandPalette() {
                   </div>
                 );
               })}
-              <div className="px-4 py-3 mt-1" style={{ borderTop: '1px solid var(--color-border)' }}>
+              {!isAndroidNative() && <div className="px-4 py-3 mt-1" style={{ borderTop: '1px solid var(--color-border)' }}>
                 <div className="text-[11px] mb-2" style={{ color: 'var(--color-text-tertiary)' }}>Or enter any Ollama model name:</div>
                 <div className="flex gap-2">
                   <input
@@ -486,7 +499,7 @@ export function CommandPalette() {
                     <Download size={12} /> Pull
                   </button>
                 </div>
-              </div>
+              </div>}
             </>
           ) : (
             /* ── Cloud Models tab ── */

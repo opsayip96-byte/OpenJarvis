@@ -11,6 +11,8 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.os.Build;
 import android.os.IBinder;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.PowerManager;
 import android.speech.RecognitionListener;
 import android.speech.RecognizerIntent;
@@ -135,9 +137,11 @@ public class WakeWordService extends Service implements RecognitionListener {
                 launch.putExtra("jarvis_wake_detected", true);
                 startActivity(launch);
             }
-            Intent event = new Intent(ACTION_WAKE_DETECTED);
-            event.setPackage(getPackageName());
-            sendBroadcast(event);
+            new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                Intent event = new Intent(ACTION_WAKE_DETECTED);
+                event.setPackage(getPackageName());
+                sendBroadcast(event);
+            }, 2200);
         } else restartRecognition();
     }
     @Override public void onError(int error) { restartRecognition(); }

@@ -17,7 +17,7 @@ import { OptInModal } from './components/OptInModal';
 import { UpdateChecker } from './components/Desktop/UpdateChecker';
 import { track, hashId } from './lib/analytics';
 import { offerAnalyticsChoice } from './lib/analytics-invitation';
-import { isAndroidNative, JARVIS_CORE_MODEL_ID } from './lib/android-native';
+import { isAndroidNative, JARVIS_CORE_MODEL_ID, JARVIS_VISION_MODEL_ID } from './lib/android-native';
 
 export default function App() {
   const [setupDone, setSetupDone] = useState(!isTauri());
@@ -75,7 +75,7 @@ export default function App() {
     Promise.all([fetchServerInfo().catch(() => null), fetchModels().catch(() => [])])
       .then(([info, remoteModels]) => {
         const models = isAndroidNative()
-          ? [{ id: JARVIS_CORE_MODEL_ID, object: 'model', created: 0, owned_by: 'openjarvis-local' }, ...remoteModels.filter((item) => item.id !== JARVIS_CORE_MODEL_ID)]
+          ? [{ id: JARVIS_CORE_MODEL_ID, object: 'model', created: 0, owned_by: 'openjarvis-local' }, { id: JARVIS_VISION_MODEL_ID, object: 'model', created: 0, owned_by: 'openjarvis-local' }, ...remoteModels.filter((item) => item.id !== JARVIS_CORE_MODEL_ID && item.id !== JARVIS_VISION_MODEL_ID)]
           : remoteModels;
         if (!cancelled) {
           // The server's active model is authoritative. Apply it before model

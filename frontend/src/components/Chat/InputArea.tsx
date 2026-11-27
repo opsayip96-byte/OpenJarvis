@@ -327,6 +327,32 @@ export function InputArea() {
     }
   }, [speechError, speechPermissionDenied, openPermissionSettings]);
 
+  // Wake word is detected by the native foreground service while another app is open.
+  // Android launches JARVIS, then this listener hands the microphone to foreground dictation.
+  useEffect(() => {
+    if (!isAndroidNative()) return;
+    let active = true;
+    let listener: { remove: () => Promise<void> } | null = null;
+    JarvisNative.addListener('wakeDetected', async ({ detected }) => {
+      if (!active || !detected) return;
+      try {
+        await JarvisNative.pauseWakeWord();
+        await startRecording();
+        toast.success('JARVIS is awake. Speak your request, then tap the microphone to send it.');
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'JARVIS woke up but could not start voice input.');
+        try { await JarvisNative.resumeWakeWord(); } catch {}
+      }
+    }).then((handle) => {
+      if (active) listener = handle;
+      else void handle.remove();
+    }).catch((error) => console.warn('Wake event listener unavailable:', error));
+    return () => {
+      active = false;
+      if (listener) void listener.remove();
+    };
+  }, [startRecording]);
+
   const handleWakeModeToggle = useCallback(async () => {
     if (wakeModeEnabled) {
       setWakeModeEnabled(false);
@@ -351,11 +377,13 @@ export function InputArea() {
     if (speechState === 'recording') {
       try {
         const text = await stopRecording();
-        if (text) {
-          await sendRecognizedSpeechRef.current(text);
-        }
+        if (text) await sendRecognizedSpeechRef.current(text);
       } catch {
-        // Error is captured in useSpeech
+        // Error is captured in useSpeech.
+      } finally {
+        if (isAndroidNative()) {
+          try { await JarvisNative.resumeWakeWord(); } catch (error) { console.warn('Could not resume JARVIS wake listener:', error); }
+        }
       }
     } else {
       await startRecording();

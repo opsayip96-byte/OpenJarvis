@@ -288,6 +288,30 @@ public class JarvisCoreNativePlugin extends Plugin {
         }
     }
 
+    private String toNativePrompt(String messagesJson) throws Exception {
+        JSONArray messages = new JSONArray(messagesJson);
+        StringBuilder prompt = new StringBuilder();
+        int start = Math.max(0, messages.length() - 12);
+        for (int i = start; i < messages.length(); i++) {
+            JSONObject message = messages.optJSONObject(i);
+            if (message == null) continue;
+            String role = message.optString("role", "user");
+            String content = message.optString("content", "");
+            if (content.isEmpty() && message.has("images")) {
+                throw new IllegalStateException("Image attachments require the separate JARVIS Vision model.");
+            }
+            if ("system".equals(role)) {
+                prompt.append("Context: ").append(content).append("\\n");
+            } else if ("assistant".equals(role)) {
+                prompt.append("JARVIS: ").append(content).append("\\n");
+            } else if ("user".equals(role)) {
+                prompt.append("User: ").append(content).append("\\n");
+            }
+        }
+        prompt.append("JARVIS:");
+        return prompt.toString();
+    }
+
     private String materializeImageInputs(String messagesJson, List<File> temporaryImages) throws Exception {
         JSONArray messages = new JSONArray(messagesJson);
         for (int i = 0; i < messages.length(); i++) {
@@ -369,7 +393,6 @@ public class JarvisCoreNativePlugin extends Plugin {
         try { slug = checkedModelSlug(call.getString("modelSlug")); }
         catch (Exception error) { call.reject(error.getMessage()); return; }
         WORKER.execute(() -> {
-            List<File> temporaryImages = new ArrayList<>();
             try {
                 if (!modelLoaded || !slug.equals(modelLoadedSlug)) {
                     File modelFile = findCactModel(modelDirectory(slug));
@@ -380,29 +403,17 @@ public class JarvisCoreNativePlugin extends Plugin {
                     modelLoaded = loaded;
                     modelLoadedSlug = loaded ? slug : null;
                 }
-                String messages = materializeImageInputs(call.getString("messages", "[]"), temporaryImages);
+                String prompt = toNativePrompt(call.getString("messages", "[]"));
                 int maxTokens = Math.max(64, Math.min(1024, call.getInt("maxTokens", 384)));
-                double temperature = Math.max(0.0, Math.min(1.5, call.getDouble("temperature", 0.7)));
-                JSONObject options = new JSONObject();
-                options.put("max_tokens", maxTokens);
-                options.put("temperature", temperature);
-                options.put("top_p", 0.8);
-                options.put("top_k", 20);
-                options.put("enable_thinking_if_supported", false);
-                String raw = nativeComplete(messages, options.toString(), maxTokens);
-                JSONObject response = new JSONObject(raw);
-                boolean success = response.optBoolean("success", true);
-                if (!success) throw new IllegalStateException(response.optString("response", "Local inference failed."));
+                String response = nativeComplete(prompt, "{}", maxTokens);
+                if (response == null || response.trim().isEmpty()) {
+                    throw new IllegalStateException("Cactus returned an empty response.");
+                }
                 call.resolve(new JSObject()
-                    .put("response", response.optString("response", raw))
-                    .put("tokensPerSecond", response.optDouble("tokens_per_second", 0))
-                    .put("totalTimeMs", response.optDouble("total_time_ms", 0))
-                    .put("timeToFirstTokenMs", response.optDouble("time_to_first_token_ms", 0))
+                    .put("response", response.trim())
                     .put("model", slug));
             } catch (Exception error) {
                 call.reject("JARVIS inference failed: " + error.getMessage(), "JARVIS_CORE_INFERENCE_FAILED", error);
-            } finally {
-                for (File image : temporaryImages) image.delete();
             }
         });
     }

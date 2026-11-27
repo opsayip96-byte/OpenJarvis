@@ -7,7 +7,7 @@ import threading
 import time
 from pathlib import Path
 
-from openjarvis.memory.store import Fact, TRUST_TRUSTED
+from openjarvis.memory.store import TRUST_TRUSTED, Fact
 
 
 class PersonalMemoryStore:

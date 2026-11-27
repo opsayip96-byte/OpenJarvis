@@ -7,7 +7,7 @@ import { fetchSavings, getBase, authHeaders, isMemoryContextEnabled } from '../.
 import { listConnectors, getSyncStatus } from '../../lib/connectors-api';
 import { serializeToolCallArguments } from '../../lib/tool-call';
 import { NeedleNative } from '../../lib/needle-native';
-import { isAndroidNative, JarvisNative } from '../../lib/android-native';
+import { isAndroidNative, JarvisNative, JarvisCoreNative, JARVIS_CORE_MODEL_ID } from '../../lib/android-native';
 import {
   engineFromCompletionChunk,
   resolveChatEngine,
@@ -363,8 +363,8 @@ export function InputArea() {
       toast.error('Pick a model first (⌘K)');
       return;
     }
-    if (selectedModel === 'needle3-local' && filesToSend.length > 0) {
-      toast.error('Needle 3 currently handles text only. Select a vision-capable model to analyze photos or videos.');
+    if ((selectedModel === 'needle3-local' || selectedModel === JARVIS_CORE_MODEL_ID) && filesToSend.length > 0) {
+      toast.error('This local text model does not process images or videos yet. Select a vision-capable model for media analysis.');
       return;
     }
 
@@ -474,6 +474,8 @@ export function InputArea() {
     });
 
     const isNeedleLocal = selectedModel === 'needle3-local';
+    const isJarvisCore = selectedModel === JARVIS_CORE_MODEL_ID;
+    const isLocalModel = isNeedleLocal || isJarvisCore;
 
     let needleActionResponse: string | null = null;
     try {
@@ -481,35 +483,41 @@ export function InputArea() {
       // chat model is selected. The selected model is only called after
       // Needle has inspected the request and returned no local action.
       if (!isNeedleLocal && isAndroidNative()) {
-        setStreamState({ phase: 'Needle 3 analysing locally...' });
         const needleStatus = await NeedleNative.getStatus();
-        if (!needleStatus.nativeAvailable || !needleStatus.modelDownloaded) {
-          throw new Error('Needle 3 routing is not ready. Install the Needle-enabled JARVIS build and download the local Needle model in Settings.');
-        }
-        // Route only the newest user request. Sending the whole history can
-        // make Needle repeat an old tool call from an earlier turn.
-        const latestUserRequest = [...apiMessages].reverse().find((message) => message.role === 'user')?.content?.trim() || content;
-        const routingInput =
-          "Decide whether this latest request explicitly asks you to execute one available Android tool. " +
-          "Do not infer actions from statements, questions, model-selection updates, context, or past turns. " +
-          "If it is ordinary conversation, return no function calls.\\nLATEST USER REQUEST:\\n" + latestUserRequest;
-        const routed = await NeedleNative.complete({
-          input: routingInput,
-          maxTokens: Math.max(64, Math.min(maxTokens, 512)),
-        });
-        let routingResult: any = null;
-        try { routingResult = JSON.parse(routed.response); } catch { /* malformed routing means normal chat */ }
-        const routedCalls = Array.isArray(routingResult?.function_calls)
-          ? routingResult.function_calls
-          : [];
-        const routingConfidence = Number(routingResult?.confidence ?? 0);
-        // Low-confidence predictions must fall through to the selected chat model.
-        if (routedCalls.length > 0 && routingConfidence >= 0.85) {
-          needleActionResponse = await handleNeedleResult(routed.response);
-          accumulatedContent = needleActionResponse;
-          setStreamState({ content: accumulatedContent, phase: 'JARVIS completed the local action.' });
+        if (needleStatus.nativeAvailable && needleStatus.modelDownloaded) {
+          setStreamState({ phase: 'Needle 3 analysing locally...' });
+          // Route only the newest user request. Sending the whole history can
+          // make Needle repeat an old tool call from an earlier turn.
+          const latestUserRequest = [...apiMessages].reverse().find((message) => message.role === 'user')?.content?.trim() || content;
+          const routingInput =
+            "Decide whether this latest request explicitly asks you to execute one available Android tool. " +
+            "Do not infer actions from statements, questions, model-selection updates, context, or past turns. " +
+            "If it is ordinary conversation, return no function calls.\\nLATEST USER REQUEST:\\n" + latestUserRequest;
+          const routed = await NeedleNative.complete({
+            input: routingInput,
+            maxTokens: Math.max(64, Math.min(maxTokens, 512)),
+          });
+          let routingResult: any = null;
+          try { routingResult = JSON.parse(routed.response); } catch { /* malformed routing means normal chat */ }
+          const routedCalls = Array.isArray(routingResult?.function_calls)
+            ? routingResult.function_calls
+            : [];
+          const routingConfidence = Number(routingResult?.confidence ?? 0);
+          // Low-confidence predictions must fall through to the selected chat model.
+          if (routedCalls.length > 0 && routingConfidence >= 0.85) {
+            needleActionResponse = await handleNeedleResult(routed.response);
+            accumulatedContent = needleActionResponse;
+            setStreamState({ content: accumulatedContent, phase: 'JARVIS completed the local action.' });
+          } else {
+            setStreamState({ phase: `${selectedModel} processing...` });
+          }
         } else {
-          setStreamState({ phase: `Needle 3 ready. ${selectedModel} processing...` });
+          useAppStore.getState().addLogEntry({
+            timestamp: Date.now(),
+            level: 'warn',
+            category: 'tool',
+            message: 'Needle 3 is not installed. Continuing without local Android action routing.',
+          });
         }
       }
 
@@ -545,6 +553,21 @@ export function InputArea() {
             toast.error(speechError instanceof Error ? speechError.message : 'JARVIS could not speak the reply.');
           }
         }
+      } else if (isJarvisCore) {
+        if (deepResearch) {
+          throw new Error('Deep Research uses the configured research backend. Turn it off to chat privately with local JARVIS Core.');
+        }
+        setStreamState({ phase: 'JARVIS Core thinking locally...' });
+        const result = await JarvisCoreNative.complete({
+          messages: JSON.stringify(apiMessages),
+          maxTokens: Math.max(64, Math.min(maxTokens, 1024)),
+          temperature,
+        });
+        accumulatedContent = result.response?.trim() || '';
+        if (!accumulatedContent) throw new Error('JARVIS Core returned an empty response.');
+        routedEngine = 'cactus-android';
+        ttftMs = result.timeToFirstTokenMs || Date.now() - startTime;
+        setStreamState({ content: accumulatedContent, phase: '' });
       } else if (needleActionResponse !== null) {
         // Needle selected and executed a local Android action. Do not bypass it\n        // by sending the same request directly to the downstream model.\n      } else if (deepResearch) {
         for await (const ev of streamResearch(
@@ -801,7 +824,7 @@ export function InputArea() {
       // Digest metadata is a backend feature. Do not make network requests
       // for a fully local Needle turn.
       let audioMeta: { url: string } | undefined;
-      if (!isNeedleLocal) {
+      if (!isLocalModel) {
         try {
           const digestRes = await fetch(`${getBase()}/api/digest`, { headers: authHeaders() });
           if (digestRes.ok) {
@@ -870,7 +893,7 @@ export function InputArea() {
       // `done` event's usage payload — re-fetching here would overwrite
       // it with a potentially stale snapshot if the server's research
       // telemetry hasn't been merged into /v1/savings yet.
-      if (!deepResearch && !isNeedleLocal) {
+      if (!deepResearch && !isLocalModel) {
         fetchSavings()
           .then((data) => useAppStore.getState().setSavings(data))
           .catch(() => {});

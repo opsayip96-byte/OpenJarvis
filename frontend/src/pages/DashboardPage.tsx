@@ -113,7 +113,7 @@ export function DashboardPage() {
                 <div className="absolute inset-6 rounded-full border border-dashed border-cyan-200/25" />
                 <Brain size={48} className="text-cyan-200" strokeWidth={1.25} />
               </div>
-              <span className="text-[10px] tracking-[.22em] text-cyan-200/80">SYSTEM ONLINE</span>
+              <span className="text-[10px] tracking-[.22em] text-cyan-200/80">INTERFACE READY</span>
             </div>
           </div>
         </section>

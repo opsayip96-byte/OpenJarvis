@@ -7,7 +7,7 @@ import { fetchSavings, getBase, authHeaders, isMemoryContextEnabled } from '../.
 import { listConnectors, getSyncStatus } from '../../lib/connectors-api';
 import { serializeToolCallArguments } from '../../lib/tool-call';
 import { NeedleNative } from '../../lib/needle-native';
-import { isAndroidNative, JarvisNative, JarvisCoreNative, JARVIS_CORE_MODEL_ID } from '../../lib/android-native';
+import { isAndroidNative, JarvisNative, JarvisCoreNative, JARVIS_CORE_MODEL_ID, JARVIS_VISION_MODEL_ID, JARVIS_CORE_MODEL_SLUG, JARVIS_VISION_MODEL_SLUG } from '../../lib/android-native';
 import { buildLocalMemoryPrompt, rememberLocalFact, forgetLocalFact, getLocalMemories } from '../../lib/local-memory';
 import {
   engineFromCompletionChunk,
@@ -369,7 +369,7 @@ export function InputArea() {
       return;
     }
     if ((selectedModel === 'needle3-local' || selectedModel === JARVIS_CORE_MODEL_ID) && filesToSend.length > 0) {
-      toast.error('This local text model does not process images or videos yet. Select a vision-capable model for media analysis.');
+      toast.error('This local text model does not process images or videos. Select JARVIS Vision to analyze media locally.');
       return;
     }
 
@@ -479,7 +479,8 @@ export function InputArea() {
     });
 
     const isNeedleLocal = selectedModel === 'needle3-local';
-    const isJarvisCore = selectedModel === JARVIS_CORE_MODEL_ID;
+    const isJarvisCore = selectedModel === JARVIS_CORE_MODEL_ID || selectedModel === JARVIS_VISION_MODEL_ID;
+    const jarvisModelSlug = selectedModel === JARVIS_VISION_MODEL_ID ? JARVIS_VISION_MODEL_SLUG : JARVIS_CORE_MODEL_SLUG;
     const isLocalModel = isNeedleLocal || isJarvisCore;
 
     let needleActionResponse: string | null = null;
@@ -579,6 +580,7 @@ export function InputArea() {
         const savedMemory = buildLocalMemoryPrompt();
         if (savedMemory) localMessages.unshift({ role: 'system', content: savedMemory });
         const result = await JarvisCoreNative.complete({
+          modelSlug: jarvisModelSlug,
           messages: JSON.stringify(localMessages),
           maxTokens: Math.max(64, Math.min(maxTokens, 1024)),
           temperature,

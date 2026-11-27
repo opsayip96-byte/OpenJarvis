@@ -16,3 +16,16 @@ target_compile_options(needlebridge PRIVATE -fexceptions -frtti)
 
 find_library(log-lib log)
 target_link_libraries(needlebridge PRIVATE cactus_engine c++_shared ${log-lib})
+
+# Cactus Flutter SDK 1.3.0 runtime for the conversational model.
+set(CACTUS_SHARED ${CMAKE_CURRENT_LIST_DIR}/../jniLibs/${ANDROID_ABI}/libcactus.so)
+if(NOT EXISTS "${CACTUS_SHARED}")
+    message(FATAL_ERROR "Missing Cactus conversational runtime: ${CACTUS_SHARED}")
+endif()
+add_library(cactus_runtime SHARED IMPORTED GLOBAL)
+set_target_properties(cactus_runtime PROPERTIES IMPORTED_LOCATION "${CACTUS_SHARED}")
+
+add_library(jarviscore SHARED jarviscore_jni.cpp)
+target_compile_features(jarviscore PRIVATE cxx_std_17)
+target_compile_options(jarviscore PRIVATE -fexceptions -frtti)
+target_link_libraries(jarviscore PRIVATE cactus_runtime c++_shared ${log-lib})

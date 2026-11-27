@@ -130,7 +130,7 @@ export function CommandPalette() {
         : models)
     : tab === 'catalogue'
     ? (isAndroidNative()
-        ? [{ id: JARVIS_CORE_MODEL_ID, size: '~1.1 GB', desc: 'Qwen3 1.7B, JARVIS on-device chat AI' }]
+        ? [{ id: JARVIS_CORE_MODEL_SLUG, size: '~1.1 GB', desc: 'Qwen3 1.7B, JARVIS on-device chat AI' }]
             .filter((m) => !query || 'qwen3-1.7b'.includes(query.toLowerCase()) || m.desc.toLowerCase().includes(query.toLowerCase()))
         : CATALOGUE_MODELS.filter((m) =>
             !installedIds.has(m.id) &&
@@ -212,13 +212,13 @@ export function CommandPalette() {
     setPulling(modelId);
     setPullError(null);
     try {
-      if (isAndroidNative() && modelId === JARVIS_CORE_MODEL_ID) {
+      if (isAndroidNative() && modelId === JARVIS_CORE_MODEL_SLUG) {
         const status = await JarvisCoreNative.getStatus({ modelSlug: JARVIS_CORE_MODEL_SLUG });
         if (!status.nativeAvailable) throw new Error('JARVIS Core runtime is missing. Install the latest Android APK.');
         if (!status.modelDownloaded) await JarvisCoreNative.downloadModel({ modelSlug: JARVIS_CORE_MODEL_SLUG });
         await JarvisCoreNative.initializeModel({ modelSlug: JARVIS_CORE_MODEL_SLUG, contextSize: 4096 });
         setPullSuccess(modelId);
-        setSelectedModel(modelId);
+        setSelectedModel(JARVIS_CORE_MODEL_ID);
         toast.success('Qwen3 1.7B downloaded and loaded. JARVIS Core is ready.');
         return;
       }

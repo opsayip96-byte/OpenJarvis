@@ -122,19 +122,32 @@ public class JarvisCoreNativePlugin extends Plugin {
                 }
                 if (!models.exists() && !models.mkdirs()) throw new IllegalStateException("Cannot create the model storage directory.");
 
-                metadataConnection = (HttpURLConnection) new URL(modelApi(slug)).openConnection();
-                metadataConnection.setConnectTimeout(20000);
-                metadataConnection.setReadTimeout(30000);
-                metadataConnection.setRequestProperty("apikey", SUPABASE_ANON_KEY);
-                metadataConnection.setRequestProperty("Authorization", "Bearer " + SUPABASE_ANON_KEY);
-                int metadataStatus = metadataConnection.getResponseCode();
-                if (metadataStatus != HttpURLConnection.HTTP_OK) {
-                    throw new IllegalStateException("Model catalogue request failed (HTTP " + metadataStatus + ").");
+                String downloadUrl;
+                long expectedModelMb;
+                if (DEFAULT_MODEL_SLUG.equals(slug)) {
+                    // The Cactus catalogue currently returns HTTP 404 for this slug.
+                    // Use the verified official Cactus-Compute Hugging Face int4 archive
+                    // directly instead of making installation depend on that catalogue.
+                    downloadUrl = "https://huggingface.co/Cactus-Compute/Qwen3-1.7B/resolve/main/weights/qwen3-1.7b-int4.zip";
+                    expectedModelMb = 960;
+                } else {
+                    metadataConnection = (HttpURLConnection) new URL(modelApi(slug)).openConnection();
+                    metadataConnection.setConnectTimeout(20000);
+                    metadataConnection.setReadTimeout(30000);
+                    metadataConnection.setRequestProperty("apikey", SUPABASE_ANON_KEY);
+                    metadataConnection.setRequestProperty("Authorization", "Bearer " + SUPABASE_ANON_KEY);
+                    int metadataStatus = metadataConnection.getResponseCode();
+                    if (metadataStatus != HttpURLConnection.HTTP_OK) {
+                        String detail = "";
+                        try { detail = readAll(metadataConnection.getErrorStream()); } catch (Exception ignored) {}
+                        throw new IllegalStateException("Model catalogue request failed (HTTP " + metadataStatus + ")" +
+                            (detail.isEmpty() ? "." : ": " + detail));
+                    }
+                    JSONObject metadata = new JSONObject(readAll(metadataConnection.getInputStream()));
+                    downloadUrl = metadata.optString("download_url", "");
+                    expectedModelMb = metadata.optLong("size_mb", 1200);
+                    if (downloadUrl.isEmpty()) throw new IllegalStateException("The Cactus catalogue did not return a model download URL.");
                 }
-                JSONObject metadata = new JSONObject(readAll(metadataConnection.getInputStream()));
-                String downloadUrl = metadata.optString("download_url", "");
-                long expectedModelMb = metadata.optLong("size_mb", 1200);
-                if (downloadUrl.isEmpty()) throw new IllegalStateException("The Cactus catalogue did not return a model download URL.");
                 long requiredBytes = Math.max(900L * 1024L * 1024L, expectedModelMb * 1024L * 1024L);
                 StatFs stat = new StatFs(models.getAbsolutePath());
                 if (stat.getAvailableBytes() < requiredBytes + 300L * 1024L * 1024L) {

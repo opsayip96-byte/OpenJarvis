@@ -66,7 +66,11 @@ public class WakeWordService extends Service implements RecognitionListener {
             startRecognition();
             return START_STICKY;
         }
-        startForeground(NOTIFICATION_ID, buildNotification());
+        if (Build.VERSION.SDK_INT >= 34) {
+            startForeground(NOTIFICATION_ID, buildNotification(), android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE);
+        } else {
+            startForeground(NOTIFICATION_ID, buildNotification());
+        }
         paused = false;
         startRecognition();
         return START_STICKY;
@@ -96,7 +100,11 @@ public class WakeWordService extends Service implements RecognitionListener {
         if (paused || !screenOn || recognizer != null) return;
         if (!SpeechRecognizer.isRecognitionAvailable(this)) return;
         try {
-            recognizer = SpeechRecognizer.createSpeechRecognizer(this);
+            if (Build.VERSION.SDK_INT >= 31 && SpeechRecognizer.isOnDeviceRecognitionAvailable(this)) {
+                recognizer = SpeechRecognizer.createOnDeviceSpeechRecognizer(this);
+            } else {
+                recognizer = SpeechRecognizer.createSpeechRecognizer(this);
+            }
             recognizer.setRecognitionListener(this);
             Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
             intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);

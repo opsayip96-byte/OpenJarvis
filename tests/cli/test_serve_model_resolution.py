@@ -104,9 +104,11 @@ def test_server_model_skips_unconfigured_cloud_default(monkeypatch) -> None:
     assert model == "local-model"
 
 
-def test_cloud_engine_is_registered_and_can_initialize_openrouter_model(monkeypatch) -> None:
-    from openjarvis.engine.cloud import CloudEngine
+def test_cloud_engine_is_registered_and_can_initialize_openrouter_model(
+    monkeypatch,
+) -> None:
     from openjarvis.engine._discovery import get_engine
+    from openjarvis.engine.cloud import CloudEngine
 
     if not EngineRegistry.contains("cloud"):
         EngineRegistry.register_value("cloud", CloudEngine)

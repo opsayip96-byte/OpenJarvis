@@ -6,20 +6,25 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAppStore } from '../lib/store';
-import { isAndroidNative, JarvisNative } from '../lib/android-native';
+import { isAndroidNative, JarvisNative, JarvisCoreNative, JARVIS_CORE_MODEL_ID, type JarvisCoreStatus } from '../lib/android-native';
 
 export function DashboardPage() {
   const navigate = useNavigate();
   const selectedModel = useAppStore((s) => s.selectedModel);
   const models = useAppStore((s) => s.models);
   const modelLoading = useAppStore((s) => s.modelLoading);
+  const setSelectedModel = useAppStore((s) => s.setSelectedModel);
+  const [coreStatus, setCoreStatus] = useState<JarvisCoreStatus | null>(null);
+  const [coreBusy, setCoreBusy] = useState(false);
+  const [coreProgress, setCoreProgress] = useState(0);
+  const [coreStage, setCoreStage] = useState('');
   const [overlayAllowed, setOverlayAllowed] = useState(false);
   const [floatingActive, setFloatingActive] = useState(false);
   const [checkingOverlay, setCheckingOverlay] = useState(true);
 
   const model = models.find((item) => item.id === selectedModel);
   const isRouter = /needle/i.test(selectedModel || '');
-  const coreReady = Boolean(selectedModel && !isRouter);
+  const coreReady = selectedModel === JARVIS_CORE_MODEL_ID;
 
   const refreshFloatingStatus = async () => {
     if (!isAndroidNative()) {
@@ -42,11 +47,70 @@ export function DashboardPage() {
   };
 
   useEffect(() => {
+    let active = true;
+    let progressListener: { remove: () => Promise<void> } | null = null;
     void refreshFloatingStatus();
-    const onFocus = () => void refreshFloatingStatus();
+    void refreshCoreStatus();
+    JarvisCoreNative.addListener('coreDownloadProgress', (event) => {
+      if (!active) return;
+      setCoreProgress(Math.max(0, Math.min(1, event.progress || 0)));
+      setCoreStage(event.stage || 'Downloading JARVIS Core...');
+    }).then((listener) => {
+      if (active) progressListener = listener;
+      else void listener.remove();
+    }).catch(() => {});
+    const onFocus = () => {
+      void refreshFloatingStatus();
+      void refreshCoreStatus();
+    };
     window.addEventListener('focus', onFocus);
-    return () => window.removeEventListener('focus', onFocus);
+    return () => {
+      active = false;
+      window.removeEventListener('focus', onFocus);
+      if (progressListener) void progressListener.remove();
+    };
   }, []);
+
+  const refreshCoreStatus = async () => {
+    if (!isAndroidNative()) return;
+    try {
+      setCoreStatus(await JarvisCoreNative.getStatus());
+    } catch {
+      setCoreStatus(null);
+    }
+  };
+
+  const installOrLoadCore = async () => {
+    if (!isAndroidNative()) {
+      toast.info('JARVIS Core runs in the native Android app.');
+      return;
+    }
+    setCoreBusy(true);
+    setCoreStage('Checking local runtime...');
+    try {
+      let status = await JarvisCoreNative.getStatus();
+      if (!status.nativeAvailable) {
+        throw new Error('The Cactus local inference runtime is not included in this build.');
+      }
+      if (!status.modelDownloaded) {
+        setCoreStage('Downloading Qwen3 1.7B model...');
+        setCoreProgress(0);
+        await JarvisCoreNative.downloadModel();
+        status = await JarvisCoreNative.getStatus();
+      }
+      setCoreStage('Loading JARVIS Core into memory...');
+      await JarvisCoreNative.initializeModel({ contextSize: 4096 });
+      setCoreStatus(await JarvisCoreNative.getStatus());
+      setSelectedModel(JARVIS_CORE_MODEL_ID);
+      toast.success('JARVIS Core is loaded. New conversations will run locally on this phone.');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not install or load JARVIS Core.');
+      await refreshCoreStatus();
+    } finally {
+      setCoreBusy(false);
+      setCoreStage('');
+    }
+  };
 
   const toggleFloatingAssistant = async () => {
     if (!isAndroidNative()) {
@@ -137,6 +201,39 @@ export function DashboardPage() {
         </section>
 
         <section className="rounded-2xl border p-4 sm:p-5" style={{ background: 'var(--color-surface)', borderColor: 'var(--color-border)' }}>
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <div className="mb-1 flex items-center gap-2">
+                <Brain size={17} style={{ color: 'var(--color-accent)' }} />
+                <h2 className="text-base font-semibold" style={{ color: 'var(--color-text)' }}>JARVIS Core, on-device AI</h2>
+              </div>
+              <p className="text-xs leading-5" style={{ color: 'var(--color-text-secondary)' }}>
+                Qwen3 1.7B runs locally through the Cactus Android runtime. First installation downloads about 1.1 GB. Chat history stays on this device for local conversations.
+              </p>
+              <p className="mt-2 text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
+                {!isAndroidNative() ? 'Install is available in the Android APK.' : coreStatus?.modelLoaded ? 'Model loaded and ready.' : coreStatus?.modelDownloaded ? 'Model downloaded, ready to load.' : coreStatus?.nativeAvailable ? 'Model not installed yet.' : 'Checking native runtime...'}
+              </p>
+              {coreBusy && (
+                <div className="mt-3 max-w-md">
+                  <div className="mb-1 flex justify-between text-[11px]" style={{ color: 'var(--color-text-secondary)' }}>
+                    <span>{coreStage || 'Working...'}</span>
+                    <span>{Math.round(coreProgress * 100)}%</span>
+                  </div>
+                  <div className="h-1.5 overflow-hidden rounded-full" style={{ background: 'var(--color-bg-tertiary)' }}>
+                    <div className="h-full rounded-full transition-all" style={{ width: `${Math.round(coreProgress * 100)}%`, background: 'var(--color-accent)' }} />
+                  </div>
+                </div>
+              )}
+            </div>
+            <button onClick={() => void installOrLoadCore()} disabled={coreBusy || !isAndroidNative()}
+              className="inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition-opacity disabled:opacity-50"
+              style={{ background: coreReady ? 'var(--color-bg-tertiary)' : '#0e7490', color: coreReady ? 'var(--color-text)' : '#fff' }}>
+              <Brain size={16} /> {coreBusy ? 'Working...' : coreStatus?.modelLoaded && coreReady ? 'JARVIS Core active' : coreStatus?.modelDownloaded ? 'Load & use JARVIS Core' : 'Install JARVIS Core'}
+            </button>
+          </div>
+        </section>
+
+        <section className="rounded-2xl border p-4 sm:p-5" style={{ background: 'var(--color-surface)', borderColor: 'var(--color-border)' }}>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <h2 className="text-base font-semibold" style={{ color: 'var(--color-text)' }}>Floating assistant</h2>
@@ -177,7 +274,7 @@ export function DashboardPage() {
         </section>
 
         <div className="flex flex-wrap items-center justify-between gap-2 pb-2 text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
-          <span>JARVIS Core conversational runtime is a separate integration milestone.</span>
+          <span>JARVIS Core uses on-device Qwen3. Needle 3 remains the separate Android action router.</span>
           <button onClick={() => navigate('/')} className="inline-flex min-h-10 items-center gap-2 rounded-lg px-3" style={{ color: 'var(--color-accent)' }}>
             <MessageSquare size={14} /> Open conversation
           </button>

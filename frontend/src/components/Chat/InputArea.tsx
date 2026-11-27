@@ -576,6 +576,21 @@ export function InputArea() {
         if (deepResearch) {
           throw new Error('Deep Research uses the configured research backend. Turn it off to chat privately with local JARVIS Core.');
         }
+        setStreamState({ phase: 'Checking JARVIS local model...' });
+        const localStatus = await JarvisCoreNative.getStatus({ modelSlug: jarvisModelSlug });
+        if (!localStatus.nativeAvailable) {
+          throw new Error('JARVIS local AI runtime is missing from this APK. Install the latest Android build.');
+        }
+        if (!localStatus.modelDownloaded) {
+          throw new Error(`${jarvisModelSlug} is not installed yet. Open Dashboard, install the JARVIS model, wait until it is ready, then try again.`);
+        }
+        if (!localStatus.modelLoaded) {
+          setStreamState({ phase: 'Loading JARVIS local AI into memory...' });
+          await JarvisCoreNative.initializeModel({
+            modelSlug: jarvisModelSlug,
+            contextSize: selectedModel === JARVIS_VISION_MODEL_ID ? 2048 : 4096,
+          });
+        }
         setStreamState({ phase: 'JARVIS Core thinking locally...' });
         const localMessages = [...apiMessages];
         const savedMemory = buildLocalMemoryPrompt();

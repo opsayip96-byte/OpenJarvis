@@ -68,6 +68,7 @@ interface JarvisCoreNativePlugin {
     receivedBytes: number;
     totalBytes: number;
     stage: string;
+    modelSlug?: string;
   }) => void): Promise<{ remove: () => Promise<void> }>;
 }
 

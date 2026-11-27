@@ -7,6 +7,7 @@ import android.media.AudioManager;
 import android.os.BatteryManager;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Build;
 import android.provider.Settings;
 import android.security.keystore.KeyGenParameterSpec;
 import android.security.keystore.KeyProperties;
@@ -199,6 +200,73 @@ public class JarvisNativePlugin extends Plugin implements RecognitionListener {
             transcript.setLength(0);
             call.resolve();
         });
+    }
+
+    @PluginMethod
+    public void checkOverlayPermission(PluginCall call) {
+        boolean granted = Build.VERSION.SDK_INT < Build.VERSION_CODES.M
+            || Settings.canDrawOverlays(getContext());
+        call.resolve(new JSObject().put("granted", granted));
+    }
+
+    @PluginMethod
+    public void requestOverlayPermission(PluginCall call) {
+        boolean granted = Build.VERSION.SDK_INT < Build.VERSION_CODES.M
+            || Settings.canDrawOverlays(getContext());
+        if (granted) {
+            call.resolve(new JSObject().put("granted", true));
+            return;
+        }
+        try {
+            Intent intent = new Intent(
+                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                Uri.parse("package:" + getContext().getPackageName())
+            );
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            getContext().startActivity(intent);
+            call.resolve(new JSObject().put("granted", false));
+        } catch (Exception e) {
+            call.reject("Could not open Android's display-over-other-apps permission screen.",
+                "OVERLAY_SETTINGS_FAILED", e);
+        }
+    }
+
+    @PluginMethod
+    public void isFloatingAssistantRunning(PluginCall call) {
+        call.resolve(new JSObject().put("running", FloatingAssistantService.isRunning()));
+    }
+
+    @PluginMethod
+    public void startFloatingAssistant(PluginCall call) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
+            && !Settings.canDrawOverlays(getContext())) {
+            call.reject("Allow JARVIS to display over other apps first.",
+                "OVERLAY_PERMISSION_REQUIRED");
+            return;
+        }
+        try {
+            Intent intent = new Intent(getContext(), FloatingAssistantService.class);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                getContext().startForegroundService(intent);
+            } else {
+                getContext().startService(intent);
+            }
+            call.resolve(new JSObject().put("started", true));
+        } catch (Exception e) {
+            call.reject("Android could not start the floating JARVIS assistant.",
+                "FLOATING_ASSISTANT_START_FAILED", e);
+        }
+    }
+
+    @PluginMethod
+    public void stopFloatingAssistant(PluginCall call) {
+        try {
+            getContext().stopService(new Intent(getContext(), FloatingAssistantService.class));
+            call.resolve();
+        } catch (Exception e) {
+            call.reject("Could not stop the floating JARVIS assistant.",
+                "FLOATING_ASSISTANT_STOP_FAILED", e);
+        }
     }
 
     @PluginMethod

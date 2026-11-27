@@ -81,7 +81,7 @@ def test_render_selects_cloud_engine_through_the_serve_cli(tmp_path: Path) -> No
     assert parsed.params["host"] == "0.0.0.0"
     assert parsed.params["port"] == 10000
     assert parsed.params["engine_key"] == "cloud"
-    assert parsed.params["model_name"] == "gpt-4o-mini"
+    assert parsed.params["model_name"] == "openrouter/free"
     assert "OPENJARVIS_ENGINE" not in _env_vars(service)
     assert _env_vars(service)["PORT"] == {"key": "PORT", "value": "10000"}
 

@@ -104,7 +104,7 @@ Java_com_openjarvis_jarvis_JarvisCoreNativePlugin_nativeComplete(
 
     const int tokenLimit = maxTokens < 64 ? 64 : (maxTokens > 1024 ? 1024 : maxTokens);
     const size_t capacity = static_cast<size_t>(tokenLimit) * 256 + 65536;
-    std::vector<char> output(capacity, '\\0');
+    std::vector<char> output(capacity, '\0');
     const int result = cactus_complete(
         messages.c_str(), nullptr, 0, tokenLimit, output.data(),
         static_cast<int>(output.size())
@@ -116,7 +116,7 @@ Java_com_openjarvis_jarvis_JarvisCoreNativePlugin_nativeComplete(
     }
     const size_t written = static_cast<size_t>(result) < output.size()
         ? static_cast<size_t>(result) : output.size() - 1;
-    output[written] = '\\0';
+    output[written] = '\0';
     return env->NewStringUTF(output.data());
 }
 

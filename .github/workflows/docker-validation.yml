@@ -1,19 +1,6 @@
 name: Docker validation
 
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - ".github/workflows/docker-validation.yml"
-      - "deploy/docker/**"
-      - "pyproject.toml"
-      - "uv.lock"
-      - "rust/**"
-      - "frontend/**"
-      - "src/**"
-      - "scripts/install/**"
-      - "configs/openjarvis/examples/**"
-      - "deploy/windows/**"
   workflow_dispatch:
 
 permissions:

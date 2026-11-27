@@ -1,0 +1,9 @@
+name: JARVIS Needle 3 Android (manual)
+
+# The canonical push/PR build is android-build.yml. Keep this workflow
+# available for explicit manual diagnostics without launching a duplicate APK build.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read

@@ -120,6 +120,7 @@ export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
   timestamp: number;
+  images?: string[];
   toolCalls?: ToolCallInfo[];
   researchTraces?: ResearchSearchTrace[];
   researchSources?: ResearchSource[];

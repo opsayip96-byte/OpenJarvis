@@ -181,8 +181,17 @@ def _resolve_server_model(
     )
 
     for candidate in candidates:
-        if candidate and (not available or candidate in available):
+        if candidate and (candidate in available or not available):
             return candidate
+        # Direct cloud models such as openrouter/free are routed by the
+        # server and do not appear in engine discovery. Keep the configured
+        # route when its credentials are present; otherwise continue to a
+        # reachable fallback so the UI cannot promise a provider that fails.
+        if candidate:
+            from openjarvis.server.cloud_router import provider_is_configured
+
+            if provider_is_configured(candidate):
+                return candidate
 
     return available[0] if available else ""
 
@@ -328,8 +337,12 @@ def serve(
     except Exception as exc:
         logger.debug("Engine instrumentation failed: %s", exc)
 
-    # Discover models
-    all_engines = discover_engines(config)
+    # A cloud-only request must stay cloud-only. Discovering other healthy
+    # engines here can wrap them into a MultiEngine and make the runtime look
+    # like it has fallback providers, even though the configured route is
+    # intentionally OpenRouter. CloudEngine already supplies its own model
+    # catalog and model-specific key validation.
+    all_engines = [] if engine_name == "cloud" else discover_engines(config)
     all_models = discover_models(all_engines)
     for ek, model_ids in all_models.items():
         merge_discovered_models(ek, model_ids)

@@ -311,6 +311,15 @@ select = ["E", "F", "I", "W"]
 # research_loop.py carries long prompt strings too (documented in CLAUDE.md);
 # the ignore was missing here.
 "src/openjarvis/agents/research_loop.py" = ["E501"]
+# HTTP route handlers and their regression tests contain intentionally long
+# protocol payloads and response assertions; keep the default limit elsewhere.
+"src/openjarvis/core/config.py" = ["E501"]
+"src/openjarvis/server/api_routes.py" = ["E501"]
+"src/openjarvis/server/app.py" = ["E501"]
+"src/openjarvis/server/conversations.py" = ["E501"]
+"src/openjarvis/server/personal_memory.py" = ["E501"]
+"src/openjarvis/server/routes.py" = ["E501"]
+"tests/server/test_personal_assistant_persistence.py" = ["E501"]
 
 [dependency-groups]
 dev = [

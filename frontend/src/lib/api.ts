@@ -2,6 +2,8 @@ import type { ModelInfo, SavingsData, ServerInfo } from '../types';
 import { SUPABASE_ANON_KEY, SUPABASE_URL } from './supabase';
 import { serializeToolCallArguments } from './tool-call';
 import { timeZoneHeaders } from './timezone';
+import { isAndroidNative, JarvisNative } from './android-native';
+import { NeedleNative } from './needle-native';
 
 // ---------------------------------------------------------------------------
 // Supabase config
@@ -17,7 +19,58 @@ export const isTauri = () => typeof window !== 'undefined' && !!window.__TAURI_I
 
 export type CloudKeyStatus = Record<string, boolean>;
 
+let _androidApiKey = '';
+
+async function reloadAndroidCloudKey(keyName: string, keyValue: string): Promise<void> {
+  const base = getBase();
+  if (!base.startsWith('https://')) {
+    throw new Error('Set an HTTPS backend URL in Settings before sending provider credentials.');
+  }
+  const response = await apiFetch('/v1/cloud/reload', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ keys: { [keyName]: keyValue } }),
+  });
+  if (!response.ok) {
+    const body = await response.text().catch(() => '');
+    throw new Error(`Backend rejected provider configuration (${response.status})${body ? `: ${body.slice(0, 240)}` : ''}`);
+  }
+  const result = await response.json().catch(() => ({}));
+  if (result.status !== 'ok') {
+    throw new Error(result.message || 'The backend did not activate the cloud provider. Check the API key and provider configuration.');
+  }
+}
+
+/** Load Android credentials from Keystore-backed native storage before API calls begin. */
+export async function initAndroidCredentials(): Promise<void> {
+  if (!isAndroidNative()) return;
+  const [apiKey, providerKey] = await Promise.all([
+    JarvisNative.getSecureValue({ name: 'OPENJARVIS_API_KEY' }),
+    JarvisNative.getSecureValue({ name: 'OPENROUTER_API_KEY' }),
+  ]);
+  _androidApiKey = apiKey.value;
+  if (providerKey.value && getBase().startsWith('https://')) {
+    try {
+      await reloadAndroidCloudKey('OPENROUTER_API_KEY', providerKey.value);
+    } catch {
+      // Keep the credential in Android Keystore; the AI status screen reports
+      // that its server could not be reached after the user opens the app.
+    }
+  }
+}
+
+export async function saveAndroidBackendApiKey(value: string): Promise<void> {
+  if (!isAndroidNative()) throw new Error('Android secure storage is unavailable.');
+  await JarvisNative.saveSecureValue({ name: 'OPENJARVIS_API_KEY', value: value.trim() });
+  _androidApiKey = value.trim();
+  const providerKey = await JarvisNative.getSecureValue({ name: 'OPENROUTER_API_KEY' });
+  if (value.trim() && providerKey.value) {
+    await reloadAndroidCloudKey('OPENROUTER_API_KEY', providerKey.value);
+  }
+}
+
 export async function getCloudKeyStatus(): Promise<CloudKeyStatus> {
+  if (isAndroidNative()) return JarvisNative.getSecureStatus();
   if (!isTauri()) return {};
   try {
     const { invoke } = await import('@tauri-apps/api/core');
@@ -29,6 +82,14 @@ export async function getCloudKeyStatus(): Promise<CloudKeyStatus> {
 }
 
 export async function saveCloudKey(keyName: string, keyValue: string): Promise<void> {
+  if (isAndroidNative()) {
+    const value = keyValue.trim();
+    await JarvisNative.saveSecureValue({ name: keyName, value });
+    if (keyName === 'OPENROUTER_API_KEY' && value) {
+      await reloadAndroidCloudKey(keyName, value);
+    }
+    return;
+  }
   if (!isTauri()) {
     throw new Error('Cloud API keys can be saved in the desktop app only.');
   }
@@ -74,6 +135,11 @@ export const getBase = (): string => {
   if (settingsUrl) return settingsUrl;
   if (import.meta.env.VITE_API_URL) return import.meta.env.VITE_API_URL;
   if (isTauri()) return _tauriApiBase || DESKTOP_API_FALLBACK;
+  // The Android APK is a standalone Capacitor app, so a relative API path
+  // resolves to capacitor://localhost and cannot reach the cloud backend.
+  // Keep a production HTTPS default while allowing the user-configured URL
+  // above to override it.
+  if (isAndroidNative()) return 'https://openjarvis-server-qg4j.onrender.com';
   return '';
 };
 
@@ -83,6 +149,7 @@ export const getBase = (): string => {
 // same settings blob as the API URL, with an optional build-time env override.
 // Returns '' when unset, so a keyless local server keeps working unchanged.
 export const getApiKey = (): string => {
+  if (isAndroidNative()) return _androidApiKey;
   try {
     const raw = localStorage.getItem('openjarvis-settings');
     if (raw) {
@@ -178,19 +245,46 @@ export async function resetInferenceSource(): Promise<void> {
 // API functions
 // ---------------------------------------------------------------------------
 
+const withNeedleLocalModel = async (models: ModelInfo[]): Promise<ModelInfo[]> => {
+  if (!isAndroidNative()) return models;
+  try {
+    const status = await NeedleNative.getStatus();
+    if (!status.nativeAvailable || models.some((model) => model.id === 'needle3-local')) return models;
+    return [...models, {
+      id: 'needle3-local',
+      object: 'model',
+      created: 0,
+      owned_by: 'openjarvis-local',
+    }];
+  } catch {
+    // Older APKs may not include the Needle bridge. Keep remote models usable.
+    return models;
+  }
+};
+
 export async function fetchModels(): Promise<ModelInfo[]> {
+  let remoteModels: ModelInfo[] = [];
   if (isTauri()) {
     try {
       const result = await tauriInvoke<{ data?: ModelInfo[] }>('fetch_models');
-      return result?.data || [];
+      remoteModels = result?.data || [];
     } catch {
-      // Fall through to fetch
+      // Fall through to HTTP discovery.
     }
   }
-  const res = await apiFetch(`/v1/models`);
-  if (!res.ok) throw new Error(`Failed to fetch models: ${res.status}`);
-  const data = await res.json();
-  return data.data || [];
+  if (remoteModels.length === 0) {
+    try {
+      const res = await apiFetch(`/v1/models`);
+      if (!res.ok) throw new Error(`Failed to fetch models: ${res.status}`);
+      const data = await res.json();
+      remoteModels = data.data || [];
+    } catch (error) {
+      // Android's on-device Needle model must remain selectable even when the
+      // optional cloud backend is offline. Other platforms retain old errors.
+      if (!isAndroidNative()) throw error;
+    }
+  }
+  return withNeedleLocalModel(remoteModels);
 }
 
 export async function fetchRecommendedModel(): Promise<{ model: string; reason: string }> {
@@ -1106,6 +1200,24 @@ export async function getMemoryStats(): Promise<MemoryStats> {
     throw new Error(`${detail} (HTTP ${res.status})`);
   }
   return res.json();
+}
+
+/** Whether the user has enabled automatic memory context in Settings. */
+export function isMemoryContextEnabled(): boolean {
+  try {
+    return localStorage.getItem('openjarvis-memory-enabled') !== 'false';
+  } catch {
+    return true;
+  }
+}
+
+export async function clearIndexedMemory(): Promise<number> {
+  const res = await apiFetch('/v1/memory?confirm=true', { method: 'DELETE' });
+  if (!res.ok) {
+    throw new Error(await memoryErrorDetail(res, 'Failed to clear indexed memory'));
+  }
+  const data = await res.json();
+  return Number(data.entries_removed ?? 0);
 }
 
 export async function searchMemory(query: string, topK: number = 5): Promise<MemorySearchResult[]> {

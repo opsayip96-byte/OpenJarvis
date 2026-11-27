@@ -49,6 +49,19 @@ def test_store_and_retrieve(tmp_path: Path):
     backend.close()
 
 
+def test_memory_persists_across_backend_restart(tmp_path: Path):
+    """A new backend instance can retrieve documents written before restart."""
+    first = _make_backend(tmp_path)
+    first.store("JARVIS remembers the user's preference for concise answers")
+    first.close()
+
+    restarted = _make_backend(tmp_path)
+    results = restarted.retrieve("preference for concise answers")
+    assert len(results) == 1
+    assert "concise answers" in results[0].content
+    restarted.close()
+
+
 def test_retrieve_ranking_by_relevance(tmp_path: Path):
     backend = _make_backend(tmp_path)
     backend.store("machine learning and deep learning")

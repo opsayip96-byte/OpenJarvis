@@ -10,6 +10,8 @@ import {
   getCloudKeyStatus,
   saveCloudKey,
 } from '../lib/api';
+import { isAndroidNative, JarvisCoreNative, JARVIS_CORE_MODEL_ID, JARVIS_CORE_MODEL_SLUG, JARVIS_VISION_MODEL_ID, JARVIS_VISION_MODEL_SLUG } from '../lib/android-native';
+import { toast } from 'sonner';
 
 /** Popular models that users can download from the catalogue. */
 const CATALOGUE_MODELS = [
@@ -107,10 +109,10 @@ export function CommandPalette() {
   const setCommandPaletteOpen = useAppStore((s) => s.setCommandPaletteOpen);
 
   const installedIds = new Set(models.map((m) => m.id));
-  const desktopKeyStorage = isTauri();
+  const secureKeyStorage = isTauri() || isAndroidNative();
 
   const refreshCloudKeyStatus = useCallback(async () => {
-    if (!desktopKeyStorage) {
+    if (!secureKeyStorage) {
       setCloudKeyStatus({});
       return;
     }
@@ -120,17 +122,20 @@ export function CommandPalette() {
     } catch (e: any) {
       setCloudKeyError(e?.message || 'Failed to read cloud key status');
     }
-  }, [desktopKeyStorage]);
+  }, [secureKeyStorage]);
 
   const filtered = tab === 'installed'
     ? (query
         ? models.filter((m) => m.id.toLowerCase().includes(query.toLowerCase()))
         : models)
     : tab === 'catalogue'
-    ? CATALOGUE_MODELS.filter((m) =>
-        !installedIds.has(m.id) &&
-        (!query || m.id.toLowerCase().includes(query.toLowerCase()) || m.desc.toLowerCase().includes(query.toLowerCase()))
-      )
+    ? (isAndroidNative()
+        ? [{ id: JARVIS_CORE_MODEL_SLUG, size: '~1.1 GB', desc: 'Qwen3 1.7B, JARVIS on-device chat AI' }]
+            .filter((m) => !query || 'qwen3-1.7b'.includes(query.toLowerCase()) || m.desc.toLowerCase().includes(query.toLowerCase()))
+        : CATALOGUE_MODELS.filter((m) =>
+            !installedIds.has(m.id) &&
+            (!query || m.id.toLowerCase().includes(query.toLowerCase()) || m.desc.toLowerCase().includes(query.toLowerCase()))
+          ))
     : []; // cloud tab doesn't use filtered
 
   useEffect(() => {
@@ -154,18 +159,42 @@ export function CommandPalette() {
 
   const handleSelect = async (modelId: string, owner?: string) => {
     const previousModel = selectedModel;
+    const isJarvisLocal = modelId === JARVIS_CORE_MODEL_ID || modelId === JARVIS_VISION_MODEL_ID;
+    if (isAndroidNative() && isJarvisLocal) {
+      const modelSlug = modelId === JARVIS_VISION_MODEL_ID ? JARVIS_VISION_MODEL_SLUG : JARVIS_CORE_MODEL_SLUG;
+      try {
+        const status = await JarvisCoreNative.getStatus({ modelSlug });
+        if (!status.nativeAvailable) throw new Error('The local JARVIS runtime is missing from this APK. Install the latest Android build.');
+        if (!status.modelDownloaded) {
+          toast.error('This JARVIS model is not installed yet. Open Dashboard and install it first.');
+          return;
+        }
+        if (!status.modelLoaded) {
+          await JarvisCoreNative.initializeModel({ modelSlug, contextSize: modelId === JARVIS_VISION_MODEL_ID ? 2048 : 4096 });
+        }
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Could not load the local JARVIS model.');
+        return;
+      }
+    }
+
     setSelectedModel(modelId);
     setCommandPaletteOpen(false);
-
     if (modelId !== previousModel) {
       const { setModelLoading, addLogEntry } = useAppStore.getState();
       setModelLoading(true);
       addLogEntry({ timestamp: Date.now(), level: 'info', category: 'model', message: `Switching to ${modelId}...` });
       try {
-        await preloadModel(modelId, owner);
-        addLogEntry({ timestamp: Date.now(), level: 'info', category: 'model', message: `${modelId} loaded` });
+        if (modelId === 'needle3-local' || (isAndroidNative() && isJarvisLocal)) {
+          addLogEntry({ timestamp: Date.now(), level: 'info', category: 'model', message: `${modelId} uses its native Android runtime; no Ollama preload is needed.` });
+        } else {
+          await preloadModel(modelId, owner);
+          addLogEntry({ timestamp: Date.now(), level: 'info', category: 'model', message: `${modelId} loaded` });
+        }
       } catch (e: any) {
         addLogEntry({ timestamp: Date.now(), level: 'error', category: 'model', message: `Failed to load ${modelId}: ${e.message}` });
+        setSelectedModel(previousModel);
+        toast.error(`Could not load ${modelId}: ${e.message}`);
       } finally {
         setModelLoading(false);
       }
@@ -183,6 +212,16 @@ export function CommandPalette() {
     setPulling(modelId);
     setPullError(null);
     try {
+      if (isAndroidNative() && modelId === JARVIS_CORE_MODEL_SLUG) {
+        const status = await JarvisCoreNative.getStatus({ modelSlug: JARVIS_CORE_MODEL_SLUG });
+        if (!status.nativeAvailable) throw new Error('JARVIS Core runtime is missing. Install the latest Android APK.');
+        if (!status.modelDownloaded) await JarvisCoreNative.downloadModel({ modelSlug: JARVIS_CORE_MODEL_SLUG });
+        await JarvisCoreNative.initializeModel({ modelSlug: JARVIS_CORE_MODEL_SLUG, contextSize: 4096 });
+        setPullSuccess(modelId);
+        setSelectedModel(JARVIS_CORE_MODEL_ID);
+        toast.success('Qwen3 1.7B downloaded and loaded. JARVIS Core is ready.');
+        return;
+      }
       await pullModel(modelId);
       setPullSuccess(modelId);
       useAppStore.getState().addLogEntry({
@@ -271,7 +310,7 @@ export function CommandPalette() {
 
   const TAB_LABELS: Record<Tab, string> = {
     installed: `Installed Models (${models.length})`,
-    catalogue: 'Download',
+    catalogue: isAndroidNative() ? 'On-device AI' : 'Download',
     cloud: 'Cloud Models',
   };
 
@@ -395,7 +434,7 @@ export function CommandPalette() {
                         </span>
                       )}
                     </button>
-                    {model.owned_by !== 'litellm' && (
+                    {model.owned_by !== 'litellm' && model.id !== 'needle3-local' && (
                       <button
                         onClick={() => handleDelete(model.id)}
                         disabled={isDeleting}
@@ -441,7 +480,7 @@ export function CommandPalette() {
                   </div>
                 );
               })}
-              <div className="px-4 py-3 mt-1" style={{ borderTop: '1px solid var(--color-border)' }}>
+              {!isAndroidNative() && <div className="px-4 py-3 mt-1" style={{ borderTop: '1px solid var(--color-border)' }}>
                 <div className="text-[11px] mb-2" style={{ color: 'var(--color-text-tertiary)' }}>Or enter any Ollama model name:</div>
                 <div className="flex gap-2">
                   <input
@@ -460,14 +499,14 @@ export function CommandPalette() {
                     <Download size={12} /> Pull
                   </button>
                 </div>
-              </div>
+              </div>}
             </>
           ) : (
             /* ── Cloud Models tab ── */
             <div className="px-4 py-2">
               <div className="text-[11px] mb-3" style={{ color: 'var(--color-text-tertiary)' }}>
-                {desktopKeyStorage
-                  ? 'Add your API keys to use cloud models. Keys are stored in secure desktop storage.'
+                {secureKeyStorage
+                  ? `Add provider keys to use cloud models. Keys are stored in ${isAndroidNative() ? 'Android Keystore' : 'secure desktop storage'}.`
                   : 'Configure cloud provider keys in the server environment to use cloud models.'}
               </div>
 
@@ -500,7 +539,7 @@ export function CommandPalette() {
                           onChange={(e) => setApiKeys((prev) => ({ ...prev, [provider.envKey]: e.target.value }))}
                           onBlur={() => handleKeyBlur(provider)}
                           placeholder={hasSavedKey ? 'Saved in secure storage' : provider.envKey}
-                          disabled={!desktopKeyStorage || isSaving}
+                          disabled={!secureKeyStorage || isSaving}
                           className="flex-1 text-xs px-2 py-1.5 bg-transparent outline-none font-mono"
                           style={{ color: 'var(--color-text)' }}
                         />

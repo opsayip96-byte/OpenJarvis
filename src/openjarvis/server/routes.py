@@ -42,6 +42,7 @@ def _to_messages(chat_messages) -> list[Message]:
             Message(
                 role=role,
                 content=m.content or "",
+                images=m.images,
                 name=m.name,
                 tool_calls=[
                     ToolCall(
@@ -161,25 +162,80 @@ async def chat_completions(request_body: ChatCompletionRequest, request: Request
     engine = request.app.state.engine
     agent = getattr(request.app.state, "agent", None)
     model = request_body.model
+    original_messages = list(request_body.messages)
+    conversation_store = getattr(request.app.state, "conversation_store", None)
+    conversation_id = request_body.conversation_id
+    if conversation_id and conversation_store is None:
+        raise HTTPException(status_code=503, detail="Persistent conversation storage is unavailable")
+    if conversation_store is not None and conversation_id:
+        try:
+            conversation_store.save_exchange(conversation_id, request_body.messages, model)
+        except Exception:
+            logging.getLogger("openjarvis.server").exception("Conversation save failed")
+
+    # A direct, explicit remember command is an approved write operation. It
+    # bypasses model inference so a provider can never claim success for a
+    # memory write that failed locally.
+    remember_text = _explicit_remember_text(request_body.messages)
+    if remember_text is not None:
+        fact_store = getattr(request.app.state, "fact_store", None)
+        if fact_store is None:
+            raise HTTPException(status_code=503, detail="Persistent personal memory is unavailable")
+        from openjarvis.memory.store import TRUST_TRUSTED
+
+        present = any(f.text.casefold() == remember_text.casefold() for f in fact_store.list())
+        if not present:
+            fact_store.add_with_trust(remember_text, source="user-approved-chat", trust=TRUST_TRUSTED)
+        if not any(f.text.casefold() == remember_text.casefold() for f in fact_store.list()):
+            raise HTTPException(status_code=500, detail="The requested memory was not persisted")
+        confirmation = "I've saved that to your personal memory."
+        if conversation_store is not None and conversation_id:
+            from openjarvis.server.models import ChatMessage
+
+            conversation_store.save_exchange(
+                conversation_id,
+                original_messages + [ChatMessage(role="assistant", content=confirmation)],
+                model,
+            )
+        if request_body.stream:
+            return _remember_stream(confirmation, model)
+        return ChatCompletionResponse(
+            model=model,
+            choices=[Choice(message=ChoiceMessage(content=confirmation))],
+        )
+    # Vision payloads must reach the engine as image bytes. The general
+    # server agent currently accepts text-only input, so route media turns
+    # directly to the selected engine rather than silently dropping images.
+    has_vision_input = any(message.images for message in request_body.messages)
     use_server_agent = (
         agent is not None
         and not request_body.tools
+        and not has_vision_input
         and (not request_body.stream or bool(getattr(agent, "_tools", None)))
     )
 
     # Inject memory context into messages before dispatching
     config = getattr(request.app.state, "config", None)
     memory_backend = getattr(request.app.state, "memory_backend", None)
+    memory_context_enabled = (
+        request_body.memory_context
+        if request_body.memory_context is not None
+        else bool(config is not None and config.agent.context_from_memory)
+    )
     if (
         config is not None
-        and config.agent.context_from_memory
+        and memory_context_enabled
         and request_body.messages
     ):
         try:
             from openjarvis.tools.storage.context import ContextConfig, inject_context
 
             memory_service = getattr(request.app.state, "memory_service", None)
-            facts = memory_service.list_facts() if memory_service is not None else []
+            fact_store = getattr(request.app.state, "fact_store", None)
+            facts = (fact_store.list() if fact_store is not None else [])
+            if memory_service is not None:
+                facts.extend(memory_service.list_facts())
+            facts = [fact for fact in facts if getattr(fact, "trusted_for_recall", True)]
 
             # Extract query from the last user message
             query_text = ""
@@ -218,6 +274,7 @@ async def chat_completions(request_body: ChatCompletionRequest, request: Request
                         ChatMessage(
                             role=msg.role.value,
                             content=msg.content,
+                            images=getattr(msg, "images", None),
                             name=msg.name,
                             tool_calls=[
                                 {
@@ -288,7 +345,7 @@ async def chat_completions(request_body: ChatCompletionRequest, request: Request
         # to the desktop UI and other stream:true clients (#735). Fall back to
         # direct token streaming when no tool-bearing agent is configured.
         if request_body.tools:
-            return await _handle_stream_tools(
+            response = await _handle_stream_tools(
                 engine,
                 model,
                 request_body,
@@ -297,8 +354,9 @@ async def chat_completions(request_body: ChatCompletionRequest, request: Request
                 bus=getattr(request.app.state, "bus", None),
                 memory_service=getattr(request.app.state, "memory_service", None),
             )
+            return _persist_stream(response, conversation_store, conversation_id, original_messages, model)
         if use_server_agent:
-            return await _handle_agent_stream(
+            response = await _handle_agent_stream(
                 agent,
                 model,
                 request_body,
@@ -307,7 +365,8 @@ async def chat_completions(request_body: ChatCompletionRequest, request: Request
                 bus=getattr(request.app.state, "bus", None),
                 memory_service=getattr(request.app.state, "memory_service", None),
             )
-        return await _handle_stream(
+            return _persist_stream(response, conversation_store, conversation_id, original_messages, model)
+        response = await _handle_stream(
             engine,
             model,
             request_body,
@@ -317,6 +376,7 @@ async def chat_completions(request_body: ChatCompletionRequest, request: Request
             bus=getattr(request.app.state, "bus", None),
             memory_service=getattr(request.app.state, "memory_service", None),
         )
+        return _persist_stream(response, conversation_store, conversation_id, original_messages, model)
 
     # Non-streaming: use agent if available, otherwise direct engine call.
     #
@@ -368,6 +428,46 @@ async def chat_completions(request_body: ChatCompletionRequest, request: Request
         bus=getattr(request.app.state, "bus", None),
         source="server.chat",
     )
+    if conversation_store is not None and conversation_id:
+        try:
+            from openjarvis.server.models import ChatMessage
+            assistant_text = _response_content(response)
+            transcript = original_messages + [ChatMessage(role="assistant", content=assistant_text)]
+            conversation_store.save_exchange(conversation_id, transcript, model)
+        except Exception:
+            logging.getLogger("openjarvis.server").exception("Conversation save failed")
+    return response
+
+
+def _persist_stream(response, store, conversation_id, messages, model):
+    """Persist streamed assistant text after the SSE response completes."""
+    if store is None or not conversation_id or not isinstance(response, StreamingResponse):
+        return response
+    original = response.body_iterator
+
+    async def iterator():
+        import json
+        content = []
+        async for chunk in original:
+            yield chunk
+            raw = chunk.decode("utf-8", errors="ignore") if isinstance(chunk, bytes) else str(chunk)
+            for line in raw.splitlines():
+                if not line.startswith("data: ") or line[6:].strip() == "[DONE]":
+                    continue
+                try:
+                    data = json.loads(line[6:])
+                    content.append(data.get("choices", [{}])[0].get("delta", {}).get("content") or "")
+                except (ValueError, IndexError, AttributeError):
+                    continue
+        text = "".join(content)
+        if text:
+            try:
+                from openjarvis.server.models import ChatMessage
+                store.save_exchange(conversation_id, messages + [ChatMessage(role="assistant", content=text)], model)
+            except Exception:
+                logging.getLogger("openjarvis.server").exception("Streamed conversation save failed")
+
+    response.body_iterator = iterator()
     return response
 
 
@@ -378,6 +478,46 @@ def _response_content(response) -> str:
     if choices:
         content = getattr(choices[0].message, "content", "") or ""
     return content
+
+
+def _explicit_remember_text(messages) -> str | None:
+    """Extract only a clear user-issued remember command, never an inference."""
+    import re
+
+    for message in reversed(messages):
+        if message.role != "user" or not message.content:
+            continue
+        match = re.match(r"^\s*remember\s+(?:this|that)\s*[:,-]?\s+(.+?)\s*$", message.content, re.I | re.S)
+        if match:
+            text = match.group(1).strip()
+            return text if text else None
+        break
+    return None
+
+
+def _remember_stream(content: str, model: str) -> StreamingResponse:
+    """Emit an OpenAI-compatible stream for a successfully persisted fact."""
+    chunk_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
+
+    async def generate():
+        first = ChatCompletionChunk(
+            id=chunk_id, model=model,
+            choices=[StreamChoice(delta=DeltaMessage(role="assistant"))],
+        )
+        chunk = ChatCompletionChunk(
+            id=chunk_id, model=model,
+            choices=[StreamChoice(delta=DeltaMessage(content=content))],
+        )
+        finish = ChatCompletionChunk(
+            id=chunk_id, model=model,
+            choices=[StreamChoice(delta=DeltaMessage(), finish_reason="stop")],
+        )
+        yield f"data: {first.model_dump_json()}\n\n"
+        yield f"data: {chunk.model_dump_json()}\n\n"
+        yield f"data: {finish.model_dump_json()}\n\n"
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
 
 
 def _record_completed_exchange(
@@ -1172,21 +1312,43 @@ async def list_models(request: Request) -> ModelListResponse:
     from openjarvis.server.cloud_router import is_cloud_model, list_local_models
 
     # Prefer engine.list_models() so mock engines work in tests.
-    # Filter out direct-cloud model IDs that may appear via MultiEngine, but
-    # retain provider-qualified IDs owned by configured engines like LiteLLM or NIM.
-    # Fall back to direct Ollama query only when the engine returns nothing.
+    # Filter out direct-cloud model IDs that may appear via MultiEngine. Keep
+    # LiteLLM-owned IDs because that engine applies its own routing. NVIDIA
+    # NIM's catalog endpoint only proves that an ID is listed, not that the
+    # hosted inference endpoint accepts it; avoid advertising NIM models until
+    # the provider/model has been explicitly verified.
     engine = request.app.state.engine
     all_ids = await asyncio.to_thread(engine.list_models)
     known_models = set(all_ids)
-    model_ids = [
-        m
-        for m in all_ids
-        if not is_cloud_model(m)
-        or _engine_key_for_model(engine, m) in ("litellm", "nim")
-        or _local_engine_advertises(engine, m, known_models=known_models)
-    ]
+    model_ids = []
+    for model_id in all_ids:
+        owner = _engine_key_for_model(engine, model_id)
+        if owner == "nim":
+            continue
+        if (
+            not is_cloud_model(model_id)
+            or owner == "litellm"
+            or _local_engine_advertises(engine, model_id, known_models=known_models)
+        ):
+            model_ids.append(model_id)
     if not model_ids:
         model_ids = await list_local_models()
+
+    # Direct cloud models are normally exposed through the Cloud Models UI,
+    # but an OpenAI-compatible client still needs the server's active model
+    # advertised by this endpoint (for example when the server was started
+    # with ``--model openrouter/free``).
+    active_model = getattr(request.app.state, "model", "")
+    active_model_is_nim = (
+        active_model and _engine_key_for_model(engine, active_model) == "nim"
+    )
+    if (
+        active_model
+        and not active_model_is_nim
+        and active_model not in model_ids
+        and is_cloud_model(active_model)
+    ):
+        model_ids.append(active_model)
 
     # Keep embed-only models out of the chat model picker. They still work for
     # memory/retrieval via the embedder path; putting them in /v1/models made
@@ -1207,7 +1369,7 @@ async def list_models(request: Request) -> ModelListResponse:
                 id=mid,
                 owned_by=(
                     _engine_key_for_model(engine, mid)
-                    if _engine_key_for_model(engine, mid) in ("litellm", "nim")
+                    if _engine_key_for_model(engine, mid) == "litellm"
                     else "openjarvis"
                 ),
             )

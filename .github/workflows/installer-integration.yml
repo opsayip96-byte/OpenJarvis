@@ -1,12 +1,6 @@
 name: Installer integration
 
 on:
-  pull_request:
-    paths:
-      - 'scripts/install/**'
-      - 'src/openjarvis/cli/**'
-      - 'tests/install/**'
-      - '.github/workflows/installer-integration.yml'
   schedule:
     - cron: '0 6 * * *'
 

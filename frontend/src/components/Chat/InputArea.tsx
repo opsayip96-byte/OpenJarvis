@@ -1,16 +1,21 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { Send, Square, Paperclip, Search } from 'lucide-react';
+import { Send, Square, Paperclip, Search, Mic, Brain } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAppStore, generateId } from '../../lib/store';
 import { streamChat, streamResearch } from '../../lib/sse';
-import { fetchSavings, getBase, authHeaders } from '../../lib/api';
+import { fetchSavings, getBase, authHeaders, isMemoryContextEnabled } from '../../lib/api';
 import { listConnectors, getSyncStatus } from '../../lib/connectors-api';
 import { serializeToolCallArguments } from '../../lib/tool-call';
+import { NeedleNative } from '../../lib/needle-native';
+import { isAndroidNative, JarvisNative, JarvisCoreNative, JARVIS_CORE_MODEL_ID, JARVIS_VISION_MODEL_ID, JARVIS_CORE_MODEL_SLUG, JARVIS_VISION_MODEL_SLUG } from '../../lib/android-native';
+import { buildLocalMemoryPrompt, rememberLocalFact, forgetLocalFact, getLocalMemories } from '../../lib/local-memory';
+import { getLocalAgentPrompt } from '../../lib/local-agents';
 import {
   engineFromCompletionChunk,
   resolveChatEngine,
 } from '../../lib/chat-telemetry';
 import { MicButton } from './MicButton';
+import { useNavigate } from 'react-router';
 import { useSpeech } from '../../hooks/useSpeech';
 import type {
   ChatMessage,
@@ -20,6 +25,85 @@ import type {
   TokenUsage,
   ToolCallInfo,
 } from '../../types';
+
+const MAX_MEDIA_FILE_BYTES = 25 * 1024 * 1024;
+const MAX_MEDIA_EDGE = 1280;
+
+function canvasToJpegBase64(canvas: HTMLCanvasElement): string {
+  return canvas.toDataURL('image/jpeg', 0.82).split(',')[1] ?? '';
+}
+
+async function captureVideoFrames(file: File): Promise<string[]> {
+  const url = URL.createObjectURL(file);
+  const video = document.createElement('video');
+  video.preload = 'metadata';
+  video.muted = true;
+  video.playsInline = true;
+  video.src = url;
+  try {
+    await new Promise<void>((resolve, reject) => {
+      video.onloadedmetadata = () => resolve();
+      video.onerror = () => reject(new Error(`Could not read video: ${file.name}`));
+      video.load();
+    });
+    const duration = Number.isFinite(video.duration) ? video.duration : 0;
+    if (duration <= 0) throw new Error(`Video has no readable duration: ${file.name}`);
+    const times = [...new Set([0, duration / 2, Math.max(0, duration - 0.15)])];
+    const frames: string[] = [];
+    for (const time of times) {
+      if (Math.abs(video.currentTime - time) > 0.02) {
+        await new Promise<void>((resolve, reject) => {
+          video.onseeked = () => resolve();
+          video.onerror = () => reject(new Error(`Could not read a frame from ${file.name}`));
+          video.currentTime = time;
+        });
+      }
+      const scale = Math.min(1, MAX_MEDIA_EDGE / Math.max(video.videoWidth, video.videoHeight));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
+      canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
+      const context = canvas.getContext('2d');
+      if (!context) throw new Error('This device cannot process video frames.');
+      context.drawImage(video, 0, 0, canvas.width, canvas.height);
+      frames.push(canvasToJpegBase64(canvas));
+    }
+    return frames;
+  } finally {
+    video.pause();
+    video.removeAttribute('src');
+    video.load();
+    URL.revokeObjectURL(url);
+  }
+}
+
+async function prepareMediaImages(files: File[]): Promise<string[]> {
+  const payloads: string[] = [];
+  for (const file of files) {
+    if (file.size > MAX_MEDIA_FILE_BYTES) {
+      throw new Error(`${file.name} is larger than 25 MB. Choose a smaller file.`);
+    }
+    if (file.type.startsWith('image/')) {
+      const bitmap = await createImageBitmap(file);
+      try {
+        const scale = Math.min(1, MAX_MEDIA_EDGE / Math.max(bitmap.width, bitmap.height));
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+        canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+        const context = canvas.getContext('2d');
+        if (!context) throw new Error('This device cannot process the selected photo.');
+        context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+        payloads.push(canvasToJpegBase64(canvas));
+      } finally {
+        bitmap.close();
+      }
+    } else if (file.type.startsWith('video/')) {
+      payloads.push(...await captureVideoFrames(file));
+    } else {
+      throw new Error(`Unsupported file type: ${file.name}. Choose a photo or video.`);
+    }
+  }
+  return payloads;
+}
 
 // While Deep Research is toggled on, poll connected sources for sync
 // progress so we can surface "Searching over N items — sync in progress"
@@ -79,17 +163,112 @@ function useResearchCorpusSync(enabled: boolean): {
   return state;
 }
 
+async function handleNeedleResult(raw: string): Promise<string> {
+  let parsed: any;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return raw.trim();
+  }
+  if (!parsed || typeof parsed !== 'object') return raw.trim();
+  if (parsed.success === false) {
+    throw new Error(parsed.error || 'Needle could not route this request.');
+  }
+  const calls = Array.isArray(parsed.function_calls) ? parsed.function_calls : [];
+  const confidence = Number(parsed.confidence ?? 0);
+  if (calls.length === 0) {
+    return "Needle 3 is running locally, but it is JARVIS's tool router, not its conversational AI. No Android action was needed for this request. Select an installed chat model for a conversation. JARVIS Core local chat is not yet installed.";
+  }
+  if (confidence < 0.85) {
+    // Low-confidence tool predictions are not user-facing failures. Needle is
+    // a router, so uncertain actions must be treated as ordinary conversation.
+    return "Needle 3 is running locally. I'm JARVIS's on-device tool router: I identify supported actions, validate their arguments, and hand ordinary questions to your selected chat model. I won't execute an action unless the request is clear and confidence is high.";
+  }
+  const completed: string[] = [];
+  for (const call of calls) {
+    const name = String(call?.name || '');
+    const args = call?.arguments && typeof call.arguments === 'object' ? call.arguments : {};
+    if (name === 'speak_text') {
+      const text = String(args.text || '').trim();
+      if (!text) throw new Error('Needle requested speech without any text.');
+      await JarvisNative.speak({ text, language: 'en-GB', rate: 1, pitch: 1, volume: 1 });
+      completed.push('Spoke the requested text.');
+    } else if (name === 'open_app_settings') {
+      await JarvisNative.openAppSettings();
+      completed.push('Opened JARVIS app settings.');
+    } else if (name === 'stop_speaking') {
+      await JarvisNative.stopSpeaking();
+      completed.push('Stopped speech.');
+    } else if (name === 'open_system_panel') {
+      const panel = String(args.panel || '').trim();
+      const labels: Record<string, string> = {
+        wifi: 'Wi-Fi settings',
+        bluetooth: 'Bluetooth settings',
+        display: 'Display settings',
+        sound: 'Sound settings',
+        battery: 'Battery settings',
+        location: 'Location settings',
+        app_settings: 'JARVIS app permissions',
+      };
+      if (!labels[panel]) throw new Error('Needle requested an unsupported Android settings panel.');
+      await JarvisNative.openSystemPanel({ panel });
+      completed.push(`Opened ${labels[panel]}.`);
+    } else if (name === 'launch_app') {
+      const requestedApp = String(args.packageName || args.package_name || args.app || '').trim();
+      const appPackages: Record<string, string> = {
+        youtube: 'com.google.android.youtube',
+        chrome: 'com.android.chrome',
+        whatsapp: 'com.whatsapp',
+        instagram: 'com.instagram.android',
+        maps: 'com.google.android.apps.maps',
+        gmail: 'com.google.android.gm',
+        camera: 'com.android.camera2',
+        spotify: 'com.spotify.music',
+        settings: 'com.android.settings',
+        telegram: 'org.telegram.messenger',
+      };
+      const packageName = appPackages[requestedApp.toLowerCase()] || requestedApp;
+      if (!/^[A-Za-z0-9_]+(?:\\.[A-Za-z0-9_]+)+$/.test(packageName)) {
+        throw new Error('Tell me the app name, for example YouTube, Chrome, WhatsApp, Instagram, Maps, Gmail, Camera, or Spotify.');
+      }
+      await JarvisNative.launchApp({ packageName });
+      completed.push(`Launched ${requestedApp}.`);
+    } else if (name === 'set_media_volume') {
+      const percent = Number(args.percent);
+      if (!Number.isFinite(percent) || percent < 0 || percent > 100) {
+        throw new Error('Media volume must be between 0 and 100 percent.');
+      }
+      const result = await JarvisNative.setMediaVolume({ percent });
+      completed.push(`Set media volume to ${result.percent}%.`);
+    } else if (name === 'get_battery_status') {
+      const battery = await JarvisNative.getBatteryStatus();
+      completed.push(`Phone battery is ${battery.percent}%, ${battery.charging ? 'charging' : 'not charging'}.`);
+    } else {
+      throw new Error(`Needle selected "${name}", but no Android executor is connected for that action yet.`);
+    }
+  }
+  return completed.join(' ');
+}
+
 export function InputArea() {
+  const navigate = useNavigate();
   const [input, setInput] = useState('');
+  const [attachments, setAttachments] = useState<File[]>([]);
+  const [wakeModeEnabled, setWakeModeEnabled] = useState(false);
+  const wakeCommandPendingRef = useRef(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const sendRecognizedSpeechRef = useRef<(text: string) => Promise<void>>(async () => {});
 
   const activeId = useAppStore((s) => s.activeId);
   const selectedModel = useAppStore((s) => s.selectedModel);
   const streamState = useAppStore((s) => s.streamState);
   const messages = useAppStore((s) => s.messages);
   const speechEnabled = useAppStore((s) => s.settings.speechEnabled);
+  const voiceOutputEnabled = useAppStore((s) => s.settings.voiceOutputEnabled);
+  const voiceAutoplay = useAppStore((s) => s.settings.voiceAutoplay);
   const maxTokens = useAppStore((s) => s.settings.maxTokens);
   const temperature = useAppStore((s) => s.settings.temperature);
   const createConversation = useAppStore((s) => s.createConversation);
@@ -107,8 +286,11 @@ export function InputArea() {
     state: speechState,
     error: speechError,
     available: speechAvailable,
+    permissionDenied: speechPermissionDenied,
+    openPermissionSettings,
     startRecording,
     stopRecording,
+    cancelRecording,
   } = useSpeech();
 
   // Abort in-flight stream when the user switches models mid-generation.
@@ -136,19 +318,72 @@ export function InputArea() {
 
   useEffect(() => {
     if (speechError) {
-      toast.error(speechError, { duration: 8000 });
+      toast.error(speechError, {
+        duration: 8000,
+        ...(speechPermissionDenied ? {
+          action: { label: 'Open app permissions', onClick: () => void openPermissionSettings() },
+        } : {}),
+      });
     }
-  }, [speechError]);
+  }, [speechError, speechPermissionDenied, openPermissionSettings]);
+
+  // Wake word is detected by the native foreground service while another app is open.
+  // Android launches JARVIS, then this listener hands the microphone to foreground dictation.
+  useEffect(() => {
+    if (!isAndroidNative()) return;
+    let active = true;
+    let listener: { remove: () => Promise<void> } | null = null;
+    JarvisNative.addListener('wakeDetected', async ({ detected }) => {
+      if (!active || !detected) return;
+      try {
+        await JarvisNative.pauseWakeWord();
+        await startRecording();
+        toast.success('JARVIS is awake. Speak your request, then tap the microphone to send it.');
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'JARVIS woke up but could not start voice input.');
+        try { await JarvisNative.resumeWakeWord(); } catch {}
+      }
+    }).then((handle) => {
+      if (active) listener = handle;
+      else void handle.remove();
+    }).catch((error) => console.warn('Wake event listener unavailable:', error));
+    return () => {
+      active = false;
+      if (listener) void listener.remove();
+    };
+  }, [startRecording]);
+
+  const handleWakeModeToggle = useCallback(async () => {
+    if (wakeModeEnabled) {
+      setWakeModeEnabled(false);
+      wakeCommandPendingRef.current = false;
+      await cancelRecording();
+      return;
+    }
+    if (!isAndroidNative()) {
+      toast.error('Wake Mode is currently supported in the Android app only.');
+      return;
+    }
+    try {
+      await startRecording();
+      setWakeModeEnabled(true);
+      toast.success('Wake Mode active. Say “Hello JARVIS” followed by your request.');
+    } catch {
+      toast.error('Could not start Wake Mode. Check microphone permission and Android speech recognition.');
+    }
+  }, [wakeModeEnabled, cancelRecording, startRecording]);
 
   const handleMicClick = useCallback(async () => {
     if (speechState === 'recording') {
       try {
         const text = await stopRecording();
-        if (text) {
-          setInput((prev) => (prev ? prev + ' ' + text : text));
-        }
+        if (text) await sendRecognizedSpeechRef.current(text);
       } catch {
-        // Error is captured in useSpeech
+        // Error is captured in useSpeech.
+      } finally {
+        if (isAndroidNative()) {
+          try { await JarvisNative.resumeWakeWord(); } catch (error) { console.warn('Could not resume JARVIS wake listener:', error); }
+        }
       }
     } else {
       await startRecording();
@@ -171,15 +406,37 @@ export function InputArea() {
     resetStream();
   }, [resetStream]);
 
-  const sendMessage = useCallback(async () => {
-    const content = input.trim();
-    if (!content || streamState.isStreaming) return;
+  const sendMessage = useCallback(async (recognizedText?: string) => {
+    const filesToSend = attachments;
+    const textContent = recognizedText
+      ? [input.trim(), recognizedText.trim()].filter(Boolean).join(' ')
+      : input.trim();
+    const content = textContent || (filesToSend.length ? 'Please analyze the attached media.' : '');
+    const rememberMatch = content.match(/^(?:please\s+)?remember(?:\s+that)?\s+(.+)$/i);
+    const forgetMatch = content.match(/^(?:please\s+)?forget(?:\s+that)?\s+(.+)$/i);
+    const memoryAction = rememberMatch ? { type: 'remember' as const, text: rememberMatch[1].trim() }
+      : forgetMatch ? { type: 'forget' as const, text: forgetMatch[1].trim() } : null;
+    if ((!content && filesToSend.length === 0) || streamState.isStreaming) return;
     if (!selectedModel) {
       toast.error('Pick a model first (⌘K)');
       return;
     }
+    if ((selectedModel === 'needle3-local' || selectedModel === JARVIS_CORE_MODEL_ID) && filesToSend.length > 0) {
+      toast.error('This local text model does not process images or videos. Select JARVIS Vision to analyze media locally.');
+      return;
+    }
 
+    let mediaImages: string[] = [];
+    if (filesToSend.length > 0) {
+      try {
+        mediaImages = await prepareMediaImages(filesToSend);
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Could not process the selected media.');
+        return;
+      }
+    }
     setInput('');
+    setAttachments([]);
 
     let convId = activeId;
     if (!convId) {
@@ -189,17 +446,42 @@ export function InputArea() {
     const userMsg: ChatMessage = {
       id: generateId(),
       role: 'user',
-      content,
+      content: filesToSend.length
+        ? `${content}\n\n[Attached media: ${filesToSend.map((file) => file.name).join(', ')}]`
+        : content,
       timestamp: Date.now(),
     };
     addMessage(convId, userMsg);
 
-    // Build API messages before adding assistant placeholder
+    // Keep binary media out of local conversation storage. Attach the
+    // processed frames only to this request payload.
     const currentMessages = useAppStore.getState().messages;
-    const apiMessages = currentMessages.map((m) => ({
+    const apiMessages: Array<{ role: string; content: string; images?: string[] }> = currentMessages.map((m) => ({
       role: m.role,
       content: m.content,
+      ...(m.images?.length ? { images: m.images } : {}),
     }));
+    // JARVIS identity layer for conversational models. Needle 3 is a tool
+    // router, so keep this persona prompt out of its structured routing input.
+    if (selectedModel !== 'needle3-local') {
+      apiMessages.unshift({
+        role: 'system',
+        content: [
+          'You are J.A.R.V.I.S., a capable personal AI assistant.',
+          'Your manner is composed, precise and quietly witty, with a warm, natural conversational side.',
+          'Be professional for technical work and serious matters, friendly for casual conversation.',
+          'Use clear British English phrasing where natural, but do not force an accent into written text.',
+          'Address the user as Sir occasionally when it feels natural, never in every sentence.',
+          'Be proactive when a useful next step is obvious, but never claim to have performed an action you did not perform.',
+          'Be honest about uncertainty, available tools, model identity, device access and limitations.',
+          'Ask for confirmation before consequential actions, purchases, sharing private data or changing important settings.',
+        ].join(' '),
+      });
+    }
+    if (mediaImages.length > 0) {
+      const lastUserIndex = apiMessages.map((m) => m.role).lastIndexOf('user');
+      if (lastUserIndex >= 0) apiMessages[lastUserIndex].images = mediaImages;
+    }
 
     const assistantMsg: ChatMessage = {
       id: generateId(),
@@ -249,8 +531,137 @@ export function InputArea() {
         : `Request: "${content.slice(0, 80)}${content.length > 80 ? '...' : ''}" → ${selectedModel}`,
     });
 
+    const isNeedleLocal = selectedModel === 'needle3-local';
+    const isJarvisCore = selectedModel === JARVIS_CORE_MODEL_ID || selectedModel === JARVIS_VISION_MODEL_ID;
+    const jarvisModelSlug = selectedModel === JARVIS_VISION_MODEL_ID ? JARVIS_VISION_MODEL_SLUG : JARVIS_CORE_MODEL_SLUG;
+    const isLocalModel = isNeedleLocal || isJarvisCore;
+
+    let needleActionResponse: string | null = null;
     try {
-      if (deepResearch) {
+      // On Android, Needle is the first-stage router even when a separate
+      // chat model is selected. The selected model is only called after
+      // Needle has inspected the request and returned no local action.
+      if (memoryAction) {
+        if (memoryAction.type === 'remember') {
+          rememberLocalFact(memoryAction.text);
+          accumulatedContent = "Certainly, Sir. I've saved that in JARVIS's private memory on this device.";
+        } else {
+          const beforeCount = getLocalMemories().length;
+          const remaining = forgetLocalFact(memoryAction.text);
+          accumulatedContent = remaining.length === beforeCount
+            ? "I couldn't find a saved memory matching that description."
+            : "I've removed the matching fact from JARVIS's local memory.";
+        }
+        setStreamState({ content: accumulatedContent, phase: 'Local memory updated.' });
+      } else if (!isNeedleLocal && isAndroidNative()) {
+        const needleStatus = await NeedleNative.getStatus();
+        if (needleStatus.nativeAvailable && needleStatus.modelDownloaded) {
+          setStreamState({ phase: 'Needle 3 analysing locally...' });
+          // Route only the newest user request. Sending the whole history can
+          // make Needle repeat an old tool call from an earlier turn.
+          const latestUserRequest = [...apiMessages].reverse().find((message) => message.role === 'user')?.content?.trim() || content;
+          const routingInput =
+            "Decide whether this latest request explicitly asks you to execute one available Android tool. " +
+            "Do not infer actions from statements, questions, model-selection updates, context, or past turns. " +
+            "If it is ordinary conversation, return no function calls.\\nLATEST USER REQUEST:\\n" + latestUserRequest;
+          const routed = await NeedleNative.complete({
+            input: routingInput,
+            maxTokens: Math.max(64, Math.min(maxTokens, 512)),
+          });
+          let routingResult: any = null;
+          try { routingResult = JSON.parse(routed.response); } catch { /* malformed routing means normal chat */ }
+          const routedCalls = Array.isArray(routingResult?.function_calls)
+            ? routingResult.function_calls
+            : [];
+          const routingConfidence = Number(routingResult?.confidence ?? 0);
+          // Low-confidence predictions must fall through to the selected chat model.
+          if (routedCalls.length > 0 && routingConfidence >= 0.85) {
+            needleActionResponse = await handleNeedleResult(routed.response);
+            accumulatedContent = needleActionResponse;
+            setStreamState({ content: accumulatedContent, phase: 'JARVIS completed the local action.' });
+          } else {
+            setStreamState({ phase: `${selectedModel} processing...` });
+          }
+        } else {
+          useAppStore.getState().addLogEntry({
+            timestamp: Date.now(),
+            level: 'warn',
+            category: 'tool',
+            message: 'Needle 3 is not installed. Continuing without local Android action routing.',
+          });
+        }
+      }
+
+      if (isNeedleLocal) {
+        if (deepResearch) {
+          throw new Error('Deep Research requires a configured backend. Turn it off to chat locally with Needle 3.');
+        }
+        const localPrompt = apiMessages
+          .slice(-16)
+          .map((message) => `${message.role.toUpperCase()}: ${message.content}`)
+          .join('\n\n');
+        const result = await NeedleNative.complete({
+          input: localPrompt,
+          maxTokens: Math.max(64, Math.min(maxTokens, 512)),
+        });
+        const rawNeedleOutput = result.response?.trim() || '';
+        if (!rawNeedleOutput) throw new Error('Needle returned an empty response. Check that the model is loaded in Settings.');
+        accumulatedContent = await handleNeedleResult(rawNeedleOutput);
+        setStreamState({ content: accumulatedContent, phase: '' });
+        // A reply to microphone input should be audible even when the optional
+        // chat-wide autoplay setting is off. Avoid speaking twice when Needle
+        // already executed the explicit speak_text tool.
+        if (recognizedText && !accumulatedContent.includes('Spoke the requested text.')) {
+          try {
+            await JarvisNative.speak({
+              text: accumulatedContent,
+              language: 'en-GB',
+              rate: 1,
+              pitch: 1,
+              volume: 1,
+            });
+          } catch (speechError) {
+            toast.error(speechError instanceof Error ? speechError.message : 'JARVIS could not speak the reply.');
+          }
+        }
+      } else if (isJarvisCore) {
+        if (deepResearch) {
+          throw new Error('Deep Research uses the configured research backend. Turn it off to chat privately with local JARVIS Core.');
+        }
+        setStreamState({ phase: 'Checking JARVIS local model...' });
+        const localStatus = await JarvisCoreNative.getStatus({ modelSlug: jarvisModelSlug });
+        if (!localStatus.nativeAvailable) {
+          throw new Error('JARVIS local AI runtime is missing from this APK. Install the latest Android build.');
+        }
+        if (!localStatus.modelDownloaded) {
+          throw new Error(`${jarvisModelSlug} is not installed yet. Open Dashboard, install the JARVIS model, wait until it is ready, then try again.`);
+        }
+        if (!localStatus.modelLoaded) {
+          setStreamState({ phase: 'Loading JARVIS local AI into memory...' });
+          await JarvisCoreNative.initializeModel({
+            modelSlug: jarvisModelSlug,
+            contextSize: selectedModel === JARVIS_VISION_MODEL_ID ? 2048 : 4096,
+          });
+        }
+        setStreamState({ phase: 'JARVIS Core thinking locally...' });
+        const localMessages = [...apiMessages];
+        const savedMemory = buildLocalMemoryPrompt();
+        if (savedMemory) localMessages.unshift({ role: 'system', content: savedMemory });
+        const specialist = getLocalAgentPrompt(content);
+        if (specialist) localMessages.unshift({ role: 'system', content: specialist.prompt + ' The user prefixed this request with @' + specialist.name + '. Treat that prefix as a mode selector, not part of the requested output.' });
+        const result = await JarvisCoreNative.complete({
+          modelSlug: jarvisModelSlug,
+          messages: JSON.stringify(localMessages),
+          maxTokens: Math.max(64, Math.min(maxTokens, 1024)),
+          temperature,
+        });
+        accumulatedContent = result.response?.trim() || '';
+        if (!accumulatedContent) throw new Error('JARVIS Core returned an empty response.');
+        routedEngine = 'cactus-android';
+        ttftMs = result.timeToFirstTokenMs || Date.now() - startTime;
+        setStreamState({ content: accumulatedContent, phase: '' });
+      } else if (needleActionResponse !== null) {
+        // Needle selected and executed a local Android action. Do not bypass it\n        // by sending the same request directly to the downstream model.\n      } else if (deepResearch) {
         for await (const ev of streamResearch(
           content,
           selectedModel,
@@ -376,7 +787,15 @@ export function InputArea() {
         }
       } else {
       for await (const sseEvent of streamChat(
-        { model: selectedModel, messages: apiMessages, stream: true, temperature, max_tokens: maxTokens },
+        {
+          model: selectedModel,
+          conversation_id: convId,
+          messages: apiMessages,
+          stream: true,
+          temperature,
+          max_tokens: maxTokens,
+          memory_context: isMemoryContextEnabled(),
+        },
         controller.signal,
       )) {
         const eventName = sseEvent.event;
@@ -494,18 +913,21 @@ export function InputArea() {
         complexity_tier: complexity?.tier,
         suggested_max_tokens: complexity?.suggested_max_tokens,
       };
-      // Check if the response has digest audio available
+      // Digest metadata is a backend feature. Do not make network requests
+      // for a fully local Needle turn.
       let audioMeta: { url: string } | undefined;
-      try {
-        const digestRes = await fetch(`${getBase()}/api/digest`, { headers: authHeaders() });
-        if (digestRes.ok) {
-          const digest = await digestRes.json();
-          if (digest.audio_available) {
-            audioMeta = { url: `${getBase()}/api/digest/audio` };
+      if (!isLocalModel) {
+        try {
+          const digestRes = await fetch(`${getBase()}/api/digest`, { headers: authHeaders() });
+          if (digestRes.ok) {
+            const digest = await digestRes.json();
+            if (digest.audio_available) {
+              audioMeta = { url: `${getBase()}/api/digest/audio` };
+            }
           }
+        } catch {
+          // Not a digest response or server unavailable — skip
         }
-      } catch {
-        // Not a digest response or server unavailable — skip
       }
 
       updateLastAssistant(
@@ -518,6 +940,36 @@ export function InputArea() {
         researchTraces.length > 0 ? researchTraces : undefined,
         researchSourcesByRef.size > 0 ? flushSources() : undefined,
       );
+      // Speak answers to microphone-originated questions automatically.
+      // Typed messages follow the explicit voice-output preference.
+      const shouldSpeak = isAndroidNative() && Boolean(accumulatedContent.trim()) &&
+        (Boolean(recognizedText) || voiceOutputEnabled || voiceAutoplay);
+      if (shouldSpeak) {
+        try {
+          const spokenText = accumulatedContent
+            .replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '$1')
+            .replace(/https?:\/\/\S+/g, '')
+            .replace(/[`*_#>]/g, '')
+            .trim();
+          if (spokenText) {
+            await JarvisNative.speak({
+              text: spokenText.slice(0, 6000),
+              language: 'en-GB',
+              rate: 0.96,
+              pitch: 0.9,
+              volume: 1,
+            });
+          }
+        } catch (error) {
+          useAppStore.getState().addLogEntry({
+            timestamp: Date.now(),
+            level: 'warn',
+            category: 'chat',
+            message: 'Voice reply failed: ' + (error instanceof Error ? error.message : String(error)),
+          });
+          toast.error('JARVIS replied in text, but Android voice playback failed. Check your Text-to-Speech engine and media volume.');
+        }
+      }
       if (timerRef.current) {
         clearInterval(timerRef.current);
         timerRef.current = null;
@@ -533,7 +985,7 @@ export function InputArea() {
       // `done` event's usage payload — re-fetching here would overwrite
       // it with a potentially stale snapshot if the server's research
       // telemetry hasn't been merged into /v1/savings yet.
-      if (!deepResearch) {
+      if (!deepResearch && !isLocalModel) {
         fetchSavings()
           .then((data) => useAppStore.getState().setSavings(data))
           .catch(() => {});
@@ -541,6 +993,7 @@ export function InputArea() {
     }
   }, [
     input,
+    attachments,
     activeId,
     selectedModel,
     streamState.isStreaming,
@@ -552,7 +1005,53 @@ export function InputArea() {
     deepResearch,
     temperature,
     maxTokens,
+    voiceOutputEnabled,
+    voiceAutoplay,
   ]);
+
+  sendRecognizedSpeechRef.current = (text) => sendMessage(text);
+
+  // When the user has explicitly started the microphone, accept a spoken
+  // "Hello JARVIS" wake phrase and submit the words that follow it. This is
+  // foreground, tap-to-enable listening, not an always-on background mic.
+  useEffect(() => {
+    if (!isAndroidNative() || !wakeModeEnabled) return;
+    let active = true;
+    let listener: { remove: () => Promise<void> } | null = null;
+    JarvisNative.addListener('speechResult', ({ text }) => {
+      if (!active || !text || wakeCommandPendingRef.current) return;
+      // Word boundary must be a single regex escape. A doubled slash only
+      // matches a literal backslash and silently breaks the wake phrase.
+      const match = text.match(/\b(?:hello|hey)[\s,]+jarvis\b[\s,!.]*/i);
+      if (!match) return;
+      const command = text.slice(match[0].length).trim() || 'Hello';
+      wakeCommandPendingRef.current = true;
+      void (async () => {
+        try {
+          await cancelRecording();
+          await sendRecognizedSpeechRef.current(command);
+        } catch (error) {
+          console.warn('JARVIS wake request failed:', error);
+        } finally {
+          wakeCommandPendingRef.current = false;
+          if (active && wakeModeEnabled) {
+            try { await startRecording(); }
+            catch (error) { console.warn('JARVIS could not resume Wake Mode:', error); }
+          }
+        }
+      })();
+    }).then((handle) => {
+      if (active) listener = handle;
+      else void handle.remove();
+    }).catch((error) => {
+      console.warn('JARVIS wake phrase listener could not start:', error);
+      toast.error('Wake Mode listener could not start.');
+    });
+    return () => {
+      active = false;
+      if (listener) void listener.remove();
+    };
+  }, [cancelRecording, startRecording, wakeModeEnabled]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -562,9 +1061,37 @@ export function InputArea() {
   };
 
   return (
-    <div className="px-4 pb-4 pt-2" style={{ maxWidth: 'var(--chat-max-width)', margin: '0 auto', width: '100%' }}>
+    <div className="chat-input-safe-area px-4 pb-4 pt-2" style={{ maxWidth: 'var(--chat-max-width)', margin: '0 auto', width: '100%' }}>
       <div className="mb-2 flex flex-col gap-1">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          {isAndroidNative() && (
+            <button
+              type="button"
+              onClick={() => void handleWakeModeToggle()}
+              disabled={streamState.isStreaming && !wakeModeEnabled}
+              aria-pressed={wakeModeEnabled}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs transition-colors cursor-pointer disabled:opacity-50"
+              style={{
+                background: wakeModeEnabled ? 'var(--color-accent-subtle)' : 'transparent',
+                border: `1px solid ${wakeModeEnabled ? 'var(--color-accent)' : 'var(--color-border)'}`,
+                color: wakeModeEnabled ? 'var(--color-accent)' : 'var(--color-text-tertiary)',
+              }}
+              title={wakeModeEnabled ? 'Disable hands-free wake listening' : 'Enable hands-free wake listening'}
+            >
+              <Mic size={12} /> {wakeModeEnabled ? 'Wake Mode On' : 'Wake Mode'}
+            </button>
+          )}
+          {isAndroidNative() && (
+            <button
+              type="button"
+              onClick={() => navigate('/dashboard')}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs transition-colors cursor-pointer"
+              style={{ background: 'transparent', border: '1px solid var(--color-border)', color: 'var(--color-text-tertiary)' }}
+              title="Open Dashboard to install the local Qwen3 1.7B chat model"
+            >
+              <Brain size={12} /> Install Qwen3 AI
+            </button>
+          )}
           <button
             type="button"
             onClick={() => setDeepResearch(!deepResearch)}
@@ -603,6 +1130,29 @@ export function InputArea() {
           boxShadow: 'var(--shadow-sm)',
         }}
       >
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*,video/*"
+          multiple
+          className="hidden"
+          onChange={(event) => {
+            const selected = Array.from(event.target.files ?? []);
+            if (selected.length) setAttachments((current) => [...current, ...selected].slice(0, 5));
+            event.target.value = '';
+          }}
+        />
+        <button
+          type="button"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={streamState.isStreaming || modelLoading || attachments.length >= 5}
+          className="p-2 rounded-xl shrink-0 disabled:opacity-30"
+          style={{ color: 'var(--color-text-secondary)' }}
+          title="Attach photos or videos"
+          aria-label="Attach photos or videos"
+        >
+          <Paperclip size={16} />
+        </button>
         <textarea
           ref={textareaRef}
           value={input}
@@ -614,6 +1164,16 @@ export function InputArea() {
           style={{ color: 'var(--color-text)', maxHeight: '200px' }}
           disabled={streamState.isStreaming || modelLoading}
         />
+        {attachments.length > 0 && (
+          <div className="flex flex-wrap gap-1 px-1 pb-1">
+            {attachments.map((file, index) => (
+              <span key={`${file.name}-${index}`} className="inline-flex max-w-full items-center gap-1 rounded-lg px-2 py-1 text-[11px]" style={{ background: 'var(--color-bg-tertiary)', color: 'var(--color-text-secondary)' }}>
+                <span className="max-w-40 truncate">{file.name}</span>
+                <button type="button" onClick={() => setAttachments((current) => current.filter((_, i) => i !== index))} aria-label={`Remove ${file.name}`} title="Remove attachment">×</button>
+              </span>
+            ))}
+          </div>
+        )}
         {isCurrentChatStreaming ? (
           <button
             onClick={stopStreaming}
@@ -628,12 +1188,13 @@ export function InputArea() {
             <MicButton
               state={speechState}
               onClick={handleMicClick}
+              onCancel={() => void cancelRecording()}
               disabled={micDisabled}
               reason={micReason}
             />
             <button
-              onClick={sendMessage}
-              disabled={streamState.isStreaming || !input.trim() || modelLoading || !selectedModel}
+              onClick={() => void sendMessage()}
+              disabled={streamState.isStreaming || (!input.trim() && attachments.length === 0) || modelLoading || !selectedModel}
               title={selectedModel ? 'Send message' : 'Pick a model first (⌘K)'}
               className="p-2 rounded-xl transition-colors shrink-0 cursor-pointer disabled:opacity-30 disabled:cursor-default"
               style={{

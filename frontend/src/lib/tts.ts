@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { synthesizeSpeech, fetchTtsHealth } from './api';
 import { toSpeakableText } from './message-text';
+import { isAndroidNative, JarvisNative } from './android-native';
 
 export type TtsState = 'idle' | 'loading' | 'speaking';
 
@@ -33,8 +34,14 @@ interface TtsStore {
 let audio: HTMLAudioElement | null = null;
 let objectUrl: string | null = null;
 let controller: AbortController | null = null;
+let browserUtterance: SpeechSynthesisUtterance | null = null;
 let token = 0;
 let healthProbe: Promise<void> | null = null;
+
+function getBrowserSpeech(): SpeechSynthesis | null {
+  if (typeof speechSynthesis === 'undefined' || typeof SpeechSynthesisUtterance === 'undefined') return null;
+  return speechSynthesis;
+}
 
 /** Only a stream ending in the active conversation may trigger autoplay. */
 export function shouldAutoplayFinishedReply(
@@ -53,6 +60,7 @@ export function shouldAutoplayFinishedReply(
 }
 
 function teardown(): void {
+  if (isAndroidNative()) void JarvisNative.stopSpeaking().catch(() => {});
   if (audio) {
     // Detach first: clearing src re-runs the media load algorithm, which fails
     // on an empty source and dispatches an `error` event. With the handler
@@ -72,6 +80,12 @@ function teardown(): void {
     controller.abort();
     controller = null;
   }
+  if (browserUtterance) {
+    browserUtterance.onend = null;
+    browserUtterance.onerror = null;
+    getBrowserSpeech()?.cancel();
+    browserUtterance = null;
+  }
 }
 
 export const useTtsStore = create<TtsStore>((set, get) => ({
@@ -86,12 +100,14 @@ export const useTtsStore = create<TtsStore>((set, get) => ({
     if (healthProbe) return healthProbe;
     healthProbe = fetchTtsHealth()
       .then((health) => {
-        set({ available: health.available });
-        if (!health.available) healthProbe = null;
+        const available = health.available || getBrowserSpeech() !== null;
+        set({ available });
+        if (!available) healthProbe = null;
       })
       .catch(() => {
-        set({ available: false });
-        healthProbe = null;
+        const available = getBrowserSpeech() !== null;
+        set({ available });
+        if (!available) healthProbe = null;
       });
     return healthProbe;
   },
@@ -113,27 +129,111 @@ export const useTtsStore = create<TtsStore>((set, get) => ({
     controller = ac;
 
     try {
-      const blob = await synthesizeSpeech(trimmed, { signal: ac.signal });
+      let voiceId: string | undefined;
+      let speed: number | undefined;
+      let pitch = 0.85;
+      let volume = 1;
+      try {
+        voiceId = localStorage.getItem('openjarvis-tts-voice')?.trim() || undefined;
+        const savedSpeed = Number(localStorage.getItem('openjarvis-tts-speed'));
+        speed = Number.isFinite(savedSpeed) && savedSpeed >= 0.5 && savedSpeed <= 2 ? savedSpeed : undefined;
+        const savedPitch = Number(localStorage.getItem('openjarvis-tts-pitch'));
+        if (Number.isFinite(savedPitch)) pitch = Math.max(0.5, Math.min(2, savedPitch));
+        const savedVolume = Number(localStorage.getItem('openjarvis-tts-volume'));
+        if (Number.isFinite(savedVolume)) volume = Math.max(0, Math.min(1, savedVolume));
+        voiceId = localStorage.getItem('openjarvis-browser-voice')?.trim() || voiceId;
+      } catch {
+        // Browser storage may be disabled; server defaults remain usable.
+      }
+      if (isAndroidNative()) {
+        const language = localStorage.getItem('openjarvis-tts-language') || 'en-GB';
+        set({ state: 'speaking', speakingId: id });
+        await JarvisNative.speak({
+          text: trimmed,
+          language,
+          voiceName: voiceId,
+          rate: speed ?? 1,
+          pitch,
+          volume,
+        });
+        if (mine === token) set({ state: 'idle', speakingId: null });
+        return;
+      }
+      let blob: Blob | null = null;
+      let serverError: unknown;
+      try {
+        blob = await synthesizeSpeech(trimmed, { voiceId, speed, signal: ac.signal });
+      } catch (err) {
+        serverError = err;
+      }
       if (mine !== token) return;
 
-      const url = URL.createObjectURL(blob);
-      objectUrl = url;
-      const el = new Audio(url);
-      audio = el;
+      if (blob) {
+        const url = URL.createObjectURL(blob);
+        objectUrl = url;
+        const el = new Audio(url);
+        try {
+          const volume = Number(localStorage.getItem('openjarvis-tts-volume') || '1');
+          el.volume = Number.isFinite(volume) ? Math.max(0, Math.min(1, volume)) : 1;
+        } catch {}
+        audio = el;
 
-      el.onended = () => {
-        if (mine !== token) return;
-        teardown();
-        set({ state: 'idle', speakingId: null });
-      };
-      el.onerror = () => {
-        if (mine !== token) return;
-        teardown();
-        set({ state: 'idle', speakingId: null, error: 'Playback failed', errorId: id });
-      };
+        el.onended = () => {
+          if (mine !== token) return;
+          teardown();
+          set({ state: 'idle', speakingId: null });
+        };
+        el.onerror = () => {
+          if (mine !== token) return;
+          teardown();
+          set({ state: 'idle', speakingId: null, error: 'Playback failed', errorId: id });
+        };
 
-      await el.play();
-      if (mine === token) set({ state: 'speaking', speakingId: id });
+        await el.play();
+        if (mine === token) set({ state: 'speaking', speakingId: id });
+      } else {
+        const speech = getBrowserSpeech();
+        if (!speech) throw serverError ?? new Error('No text-to-speech backend available');
+        const utterance = new SpeechSynthesisUtterance(trimmed);
+        utterance.rate = speed ?? 1;
+        try {
+          const pitch = Number(localStorage.getItem('openjarvis-tts-pitch') || '0.85');
+          utterance.pitch = Number.isFinite(pitch) ? Math.max(0, Math.min(2, pitch)) : 0.85;
+          const volume = Number(localStorage.getItem('openjarvis-tts-volume') || '1');
+          utterance.volume = Number.isFinite(volume) ? Math.max(0, Math.min(1, volume)) : 1;
+          const browserVoice = localStorage.getItem('openjarvis-browser-voice')?.trim();
+          if (browserVoice) voiceId = browserVoice;
+        } catch {
+          utterance.pitch = 0.85;
+        }
+        if (voiceId) {
+          const wanted = voiceId.toLocaleLowerCase();
+          utterance.voice = speech.getVoices().find((voice) =>
+            voice.name.toLocaleLowerCase() === wanted
+            || voice.voiceURI.toLocaleLowerCase() === wanted
+          ) ?? null;
+        }
+        browserUtterance = utterance;
+        await new Promise<void>((resolve, reject) => {
+          utterance.onend = () => {
+            if (mine === token) {
+              browserUtterance = null;
+              set({ state: 'idle', speakingId: null });
+            }
+            resolve();
+          };
+          utterance.onerror = (event) => {
+            if (mine === token) {
+              browserUtterance = null;
+              reject(new Error(event.error || 'Browser speech synthesis failed'));
+            } else {
+              resolve();
+            }
+          };
+          speech.speak(utterance);
+          set({ state: 'speaking', speakingId: id });
+        });
+      }
     } catch (err) {
       if (mine !== token) return;
       if (err instanceof DOMException && err.name === 'AbortError') return;

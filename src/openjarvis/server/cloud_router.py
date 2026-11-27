@@ -101,6 +101,23 @@ def is_cloud_model(model: str) -> bool:
     return get_provider(model) is not None
 
 
+def provider_is_configured(model: str) -> bool:
+    """Return whether a model's direct cloud provider has a usable API key."""
+    provider = get_provider(model)
+    if provider is None:
+        return False
+    env_names = {
+        "openai": ("OPENAI_API_KEY",),
+        "anthropic": ("ANTHROPIC_API_KEY",),
+        "google": ("GEMINI_API_KEY", "GOOGLE_API_KEY"),
+        "openrouter": ("OPENROUTER_API_KEY",),
+        "atlascloud": ("ATLASCLOUD_API_KEY",),
+        "minimax": ("MINIMAX_API_KEY",),
+    }.get(provider, ())
+    keys = _load_keys()
+    return any(keys.get(name) for name in env_names)
+
+
 def _openrouter_model_id(model: str) -> str:
     """Return the provider-facing ID for an OpenRouter model."""
     prefix = "openrouter/"

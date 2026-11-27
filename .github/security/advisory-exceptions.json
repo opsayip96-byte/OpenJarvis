@@ -94,6 +94,17 @@
       "reason": "The current OS credential-store backend requires Zbus 5 derive macros. This is a maintenance-only migration notice, not a vulnerability; changing the backend requires separate credential persistence validation.",
       "upstream": "https://rustsec.org/advisories/RUSTSEC-2026-0372.html",
       "expires": "2026-12-16"
+    },
+    {
+      "lockfile": "frontend/src-tauri/Cargo.lock",
+      "package": "cookie",
+      "version": "0.18.1",
+      "advisories": [
+        "RUSTSEC-2026-0594"
+      ],
+      "reason": "This exact transitive cookie version is used by the Tauri desktop webview stack. The advisory requires a Unix process to fork without exec, reuse the same thread and key, and add private cookies in multiple forked processes; this desktop application does not implement a forking worker model or private-cookie service. Keep the exception narrowly pinned to this lockfile and version, and remove it as soon as the upstream fixed release is available.",
+      "upstream": "https://rustsec.org/advisories/RUSTSEC-2026-0594.html",
+      "expires": "2026-12-16"
     }
   ]
 }

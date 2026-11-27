@@ -369,6 +369,30 @@ class LocalFactStore(FactStore):
             self._sync_from_disk_locked()
             return list(self._facts)
 
+    def update(self, index: int, text: str) -> bool:
+        """Replace one explicitly managed fact and keep it user-approved."""
+        text = (text or "").strip()
+        if not text:
+            return False
+        with self._lock, _cross_process_lock(self._lock_path()):
+            self._sync_from_disk_locked()
+            if not 0 <= index < len(self._facts):
+                return False
+            self._facts[index].text = text
+            self._facts[index].trust = TRUST_TRUSTED
+            self._flush()
+        return True
+
+    def delete(self, index: int) -> bool:
+        """Delete one fact by its current list index."""
+        with self._lock, _cross_process_lock(self._lock_path()):
+            self._sync_from_disk_locked()
+            if not 0 <= index < len(self._facts):
+                return False
+            self._facts.pop(index)
+            self._flush()
+        return True
+
     def clear(self) -> int:
         with self._lock, _cross_process_lock(self._lock_path()):
             self._sync_from_disk_locked()

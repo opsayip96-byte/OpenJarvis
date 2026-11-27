@@ -16,6 +16,7 @@ from openjarvis.engine.cloud import (
     _is_deepseek_model,
     _is_openai_model,
     _is_openrouter_model,
+    _openrouter_model_id,
     estimate_cost,
 )
 from tests.engine.conftest import CLOUD_KEY_ENV_VARS
@@ -680,6 +681,14 @@ class TestOpenRouterToolForwarding:
     to the (OpenAI-compatible) API and parse tool_calls back out of the response.
     Pre-fix, both were dropped, silently breaking function-calling via OpenRouter.
     """
+
+    def test_free_router_model_id_is_preserved(self) -> None:
+        assert _openrouter_model_id("openrouter/free") == "openrouter/free"
+        assert _openrouter_model_id("openrouter/auto") == "openrouter/auto"
+        assert (
+            _openrouter_model_id("openrouter/nvidia/model:free")
+            == "nvidia/model:free"
+        )
 
     def test_generate_forwards_tools_and_parses_tool_calls(
         self, monkeypatch: pytest.MonkeyPatch

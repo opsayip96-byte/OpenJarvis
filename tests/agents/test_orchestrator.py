@@ -271,6 +271,25 @@ class TestOrchestratorAgent:
         assert len(result.tool_results) == 1
         assert result.tool_results[0].success is False
 
+    def test_empty_tool_name_returns_a_clear_error_without_retrying(self):
+        engine = MagicMock()
+        engine.engine_id = "mock"
+        engine.generate.return_value = {
+            "content": "",
+            "tool_calls": [{"id": "call_bad", "name": "", "arguments": "{}"}],
+            "usage": {"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8},
+            "model": "test-model",
+            "finish_reason": "tool_calls",
+        }
+        agent = OrchestratorAgent(engine, "test-model", tools=[_CalculatorStub()])
+
+        result = agent.run("Use the calculator")
+
+        assert "invalid tool call" in result.content
+        assert result.turns == 1
+        assert result.tool_results == []
+        assert engine.generate.call_count == 1
+
     def test_temperature_passthrough(self):
         engine = _make_engine_no_tools()
         agent = OrchestratorAgent(engine, "test-model", temperature=0.1)

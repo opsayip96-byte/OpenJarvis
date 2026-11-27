@@ -65,6 +65,9 @@ export function ConversationList({ searchQuery }: Props) {
               onClick={() => {
                 selectConversation(conv.id);
                 navigate('/');
+                if (window.matchMedia?.('(max-width: 767px)').matches) {
+                  useAppStore.getState().setSidebarOpen(false);
+                }
               }}
               className="flex-1 text-left px-3 py-2 min-w-0 cursor-pointer"
             >

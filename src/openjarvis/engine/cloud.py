@@ -123,6 +123,7 @@ _DEEPSEEK_MODELS = [
 # OpenRouter models — prefixed with "openrouter/" so they can be identified
 _OPENROUTER_POPULAR = [
     "openrouter/auto",
+    "openrouter/free",
     "openrouter/openai/gpt-4o",
     "openrouter/anthropic/claude-sonnet-4.5",
     "openrouter/google/gemini-2.5-pro",
@@ -170,6 +171,20 @@ def _is_deepseek_model(model: str) -> bool:
 
 def _is_openrouter_model(model: str) -> bool:
     return model.startswith("openrouter/")
+
+
+def _openrouter_model_id(model: str) -> str:
+    """Resolve an OpenRouter-qualified model ID to the API's model ID.
+
+    Most model IDs use ``openrouter/<provider>/<model>`` in OpenJarvis and
+    need the first prefix removed. OpenRouter's built-in routers (``auto``
+    and ``free``) retain the ``openrouter/`` prefix in their API IDs.
+    """
+    prefix = "openrouter/"
+    candidate = model.removeprefix(prefix)
+    if model.startswith(prefix) and "/" in candidate:
+        return candidate
+    return model
 
 
 def _is_atlascloud_model(model: str) -> bool:
@@ -1042,8 +1057,7 @@ class CloudEngine(InferenceEngine):
             raise EngineConnectionError(
                 "OpenRouter client not available — set OPENROUTER_API_KEY"
             )
-        # Strip the "openrouter/" prefix to get the actual model ID
-        actual_model = model.removeprefix("openrouter/")
+        actual_model = _openrouter_model_id(model)
         kwargs.pop("response_format", None)
         create_kwargs: Dict[str, Any] = {
             "model": actual_model,
@@ -1660,7 +1674,7 @@ class CloudEngine(InferenceEngine):
     ) -> AsyncIterator[str]:
         if self._openrouter_client is None:
             raise EngineConnectionError("OpenRouter client not available")
-        actual_model = model.removeprefix("openrouter/")
+        actual_model = _openrouter_model_id(model)
         create_kwargs: Dict[str, Any] = {
             "model": actual_model,
             "messages": messages_to_dicts(messages),
@@ -1801,7 +1815,7 @@ class CloudEngine(InferenceEngine):
             client = self._openrouter_client
             if client is None:
                 raise EngineConnectionError("OpenRouter client not available")
-            actual_model = model.removeprefix("openrouter/")
+            actual_model = _openrouter_model_id(model)
             create_kwargs: Dict[str, Any] = {
                 "model": actual_model,
                 "messages": messages_to_dicts(messages),

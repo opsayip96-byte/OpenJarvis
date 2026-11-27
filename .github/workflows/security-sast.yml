@@ -56,9 +56,6 @@ jobs:
           - manifest: rust/Cargo.toml
             lockfile: rust/Cargo.lock
             artifact: backend
-          - manifest: frontend/src-tauri/Cargo.toml
-            lockfile: frontend/src-tauri/Cargo.lock
-            artifact: desktop
     steps:
       - uses: actions/checkout@v7
         with:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from openjarvis.cli.serve import _resolve_server_model
 from openjarvis.core.config import JarvisConfig
+from openjarvis.core.registry import EngineRegistry
 
 
 class _FakeEngine:
@@ -62,3 +63,63 @@ def test_server_model_keeps_explicit_cli_model() -> None:
     )
 
     assert model == "explicit-model"
+
+
+def test_server_model_keeps_configured_openrouter_model(monkeypatch) -> None:
+    cfg = JarvisConfig()
+    cfg.intelligence.default_model = "openrouter/free"
+    monkeypatch.setattr(
+        "openjarvis.server.cloud_router.provider_is_configured",
+        lambda model: model == "openrouter/free",
+    )
+
+    model = _resolve_server_model(
+        None,
+        config=cfg,
+        engine_name="multi",
+        engine=_FakeEngine(["bigcode/starcoder2-15b"]),
+        all_models={"multi": ["bigcode/starcoder2-15b"]},
+    )
+
+    assert model == "openrouter/free"
+
+
+def test_server_model_skips_unconfigured_cloud_default(monkeypatch) -> None:
+    cfg = JarvisConfig()
+    cfg.intelligence.default_model = "openrouter/free"
+    cfg.intelligence.fallback_model = "local-model"
+    monkeypatch.setattr(
+        "openjarvis.server.cloud_router.provider_is_configured",
+        lambda model: False,
+    )
+
+    model = _resolve_server_model(
+        None,
+        config=cfg,
+        engine_name="multi",
+        engine=_FakeEngine(["local-model"]),
+        all_models={"multi": ["local-model"]},
+    )
+
+    assert model == "local-model"
+
+
+def test_cloud_engine_is_registered_and_can_initialize_openrouter_model(
+    monkeypatch,
+) -> None:
+    from openjarvis.engine._discovery import get_engine
+    from openjarvis.engine.cloud import CloudEngine
+
+    if not EngineRegistry.contains("cloud"):
+        EngineRegistry.register_value("cloud", CloudEngine)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-only-key")
+    cfg = JarvisConfig()
+    cfg.engine.default = "cloud"
+
+    assert EngineRegistry.contains("cloud")
+    resolved = get_engine(cfg, "cloud", model="openrouter/free")
+
+    assert resolved is not None
+    assert resolved[0] == "cloud"
+    assert resolved[1].can_serve("openrouter/free")
+    resolved[1].close()

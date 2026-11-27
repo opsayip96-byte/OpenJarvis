@@ -25,6 +25,7 @@ import {
   fetchSpeechHealth,
   fetchTtsHealth,
   getMemoryStats,
+  clearIndexedMemory,
   getInferenceSource,
   setInferenceSource,
   getCloudKeyStatus,
@@ -33,10 +34,14 @@ import {
   saveToolCredentials,
   deleteToolCredential,
   isTauri,
+  saveAndroidBackendApiKey,
   type InferenceSource,
   type MemoryStats,
 } from '../lib/api';
+import { isAndroidNative, JarvisNative, type AndroidVoice } from '../lib/android-native';
 import { isAutoUpdateDisabled, setAutoUpdateDisabled } from '../components/Desktop/UpdateChecker';
+import { apiFetch } from '../lib/api';
+import { NeedleLocalSection } from '../components/settings/NeedleLocalSection';
 
 const CLOUD_KEY_STATUS_CHANGED = 'openjarvis-cloud-key-status-changed';
 
@@ -75,9 +80,9 @@ function ApiKeyInput({
   const [saved, setSaved] = useState(false);
   const [hasKey, setHasKey] = useState(false);
   const [error, setError] = useState('');
-  const desktopKeyStorage = isTauri();
-  const serverToolStorage = !desktopKeyStorage && !!toolName;
-  const canManage = desktopKeyStorage || serverToolStorage;
+  const secureKeyStorage = isTauri() || isAndroidNative();
+  const serverToolStorage = !secureKeyStorage && !!toolName;
+  const canManage = secureKeyStorage || serverToolStorage;
 
   const refresh = useCallback(async () => {
     if (!canManage) {
@@ -85,14 +90,14 @@ function ApiKeyInput({
       return;
     }
     try {
-      const status = desktopKeyStorage
+      const status = secureKeyStorage
         ? await getCloudKeyStatus()
         : await fetchToolCredentialStatus(toolName!);
       setHasKey(!!status[keyName]);
     } catch {
       setHasKey(false);
     }
-  }, [canManage, desktopKeyStorage, keyName, toolName]);
+  }, [canManage, secureKeyStorage, keyName, toolName]);
 
   useEffect(() => {
     void refresh();
@@ -105,7 +110,7 @@ function ApiKeyInput({
     if (!next) return;
     setError('');
     try {
-      if (desktopKeyStorage) {
+      if (secureKeyStorage) {
         await saveCloudKey(keyName, next);
       } else if (toolName) {
         await saveToolCredentials(toolName, { [keyName]: next });
@@ -125,7 +130,7 @@ function ApiKeyInput({
   const remove = async () => {
     setError('');
     try {
-      if (desktopKeyStorage) {
+      if (secureKeyStorage) {
         await saveCloudKey(keyName, '');
       } else if (toolName) {
         await deleteToolCredential(toolName, keyName);
@@ -149,7 +154,7 @@ function ApiKeyInput({
         value={value}
         onChange={e => setValue(e.target.value)}
         onBlur={() => { if (value.trim()) void save(value); }}
-        placeholder={hasKey ? (desktopKeyStorage ? 'Saved in secure storage' : 'Saved by local server') : placeholder}
+        placeholder={hasKey ? (secureKeyStorage ? 'Saved in secure storage' : 'Saved by local server') : placeholder}
         disabled={!canManage}
         className="w-48 px-2 py-1 rounded text-xs"
         style={{ background: 'var(--color-bg)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }} />
@@ -170,10 +175,10 @@ function ApiKeyInput({
 
 function CloudProviderStatus({ label, keyName }: { label: string; keyName: string }) {
   const [hasKey, setHasKey] = useState(false);
-  const desktopKeyStorage = isTauri();
+  const secureKeyStorage = isTauri() || isAndroidNative();
 
   const refresh = useCallback(async () => {
-    if (!desktopKeyStorage) {
+    if (!secureKeyStorage) {
       setHasKey(false);
       return;
     }
@@ -183,7 +188,7 @@ function CloudProviderStatus({ label, keyName }: { label: string; keyName: strin
     } catch {
       setHasKey(false);
     }
-  }, [desktopKeyStorage, keyName]);
+  }, [secureKeyStorage, keyName]);
 
   useEffect(() => {
     void refresh();
@@ -259,7 +264,7 @@ export function MemoryStatusRow({
         : 'Unavailable';
 
   return (
-    <SettingRow label="Memory status" description={description}>
+    <SettingRow label="Indexed document memory" description={`${description}. Saved personal facts are listed separately below.`}>
       <div className="flex items-center gap-2">
         <Brain size={14} style={{ color: stats && stats.backend !== 'none' ? 'var(--color-accent)' : 'var(--color-text-tertiary)' }} />
         <span className="text-xs whitespace-nowrap" style={{ color: 'var(--color-text-secondary)' }}>
@@ -280,6 +285,117 @@ export function MemoryStatusRow({
   );
 }
 
+type PersonalMemory = { index: number; text: string; source: string; trust: string };
+
+function PersonalMemoryManager() {
+  const [memories, setMemories] = useState<PersonalMemory[]>([]);
+  const [draft, setDraft] = useState('');
+  const [editing, setEditing] = useState<number | null>(null);
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    try {
+      const response = await apiFetch('/v1/memories');
+      if (!response.ok) throw new Error(`Could not load saved memories (HTTP ${response.status}).`);
+      const body = await response.json();
+      setMemories(Array.isArray(body.memories) ? body.memories : []);
+      setError('');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void refresh(); }, [refresh]);
+
+  const save = async (index?: number) => {
+    const text = draft.trim();
+    if (!text) return;
+    try {
+      const response = index === undefined
+        ? await apiFetch('/v1/memories', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) })
+        : await apiFetch(`/v1/memories/${index}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.detail || `Could not save memory (HTTP ${response.status}).`);
+      }
+      setDraft('');
+      setEditing(null);
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const remove = async (index: number) => {
+    if (!window.confirm('Delete this saved memory?')) return;
+    try {
+      const response = await apiFetch(`/v1/memories/${index}`, { method: 'DELETE' });
+      if (!response.ok) throw new Error(`Could not delete memory (HTTP ${response.status}).`);
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const exportMemories = async () => {
+    try {
+      const response = await apiFetch('/v1/memories/export');
+      if (!response.ok) throw new Error(`Could not export memories (HTTP ${response.status}).`);
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'jarvis-memories.json';
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  return (
+    <div className="py-3" style={{ borderBottom: '1px solid var(--color-border-subtle)' }}>
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-sm" style={{ color: 'var(--color-text)' }}>Saved personal memories</div>
+        <button type="button" onClick={() => void exportMemories()} className="flex items-center gap-1 text-xs cursor-pointer" style={{ color: 'var(--color-accent)' }}>
+          <Download size={12} /> Export
+        </button>
+      </div>
+      <p className="text-xs mt-0.5 mb-2" style={{ color: 'var(--color-text-tertiary)' }}>
+        Facts you add here are saved locally and may be used as context in future chats.
+      </p>
+      {loading && <p className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>Loading…</p>}
+      {memories.map((memory) => (
+        <div key={`${memory.index}-${memory.text}`} className="flex items-start gap-2 py-2">
+          {editing === memory.index ? (
+            <>
+              <input autoFocus value={draft} onChange={(event) => setDraft(event.target.value)} className="flex-1 min-w-0 px-2 py-1 rounded text-xs" style={{ background: 'var(--color-bg)', color: 'var(--color-text)', border: '1px solid var(--color-border)' }} />
+              <button type="button" onClick={() => void save(memory.index)} className="text-xs cursor-pointer" style={{ color: 'var(--color-accent)' }}>Save</button>
+              <button type="button" onClick={() => { setEditing(null); setDraft(''); }} className="text-xs cursor-pointer" style={{ color: 'var(--color-text-secondary)' }}>Cancel</button>
+            </>
+          ) : (
+            <>
+              <span className="flex-1 min-w-0 text-xs break-words" style={{ color: 'var(--color-text-secondary)' }}>{memory.text}</span>
+              <button type="button" onClick={() => { setEditing(memory.index); setDraft(memory.text); }} className="text-xs cursor-pointer" style={{ color: 'var(--color-accent)' }}>Edit</button>
+              <button type="button" onClick={() => void remove(memory.index)} className="text-xs cursor-pointer" style={{ color: 'var(--color-error)' }}>Delete</button>
+            </>
+          )}
+        </div>
+      ))}
+      {!loading && memories.length === 0 && <p className="text-xs py-1" style={{ color: 'var(--color-text-tertiary)' }}>No saved personal memories yet.</p>}
+      <div className="flex gap-2 mt-2">
+        <input value={editing === null ? draft : ''} onChange={(event) => setDraft(event.target.value)} placeholder="Add a fact or preference to remember" className="flex-1 min-w-0 px-2 py-1.5 rounded text-xs" style={{ background: 'var(--color-bg)', color: 'var(--color-text)', border: '1px solid var(--color-border)' }} />
+        <button type="button" onClick={() => void save()} disabled={!draft.trim()} className="px-3 py-1.5 rounded text-xs cursor-pointer disabled:opacity-40" style={{ background: 'var(--color-accent)', color: 'white' }}>Remember</button>
+      </div>
+      {error && <p role="alert" className="text-xs mt-2" style={{ color: 'var(--color-error)' }}>{error}</p>}
+    </div>
+  );
+}
+
 const themeOptions: { value: ThemeMode; label: string; icon: typeof Sun }[] = [
   { value: 'light', label: 'Light', icon: Sun },
   { value: 'dark', label: 'Dark', icon: Moon },
@@ -294,8 +410,91 @@ export function SettingsPage() {
   const serverInfo = useAppStore((s) => s.serverInfo);
   const [healthy, setHealthy] = useState<boolean | null>(null);
   const [speechBackendAvailable, setSpeechBackendAvailable] = useState<boolean | null>(null);
+  const [speechLanguage, setSpeechLanguage] = useState(() => {
+    try { return localStorage.getItem('openjarvis-speech-language') || ''; } catch { return ''; }
+  });
   const [ttsBackend, setTtsBackend] = useState<{ available: boolean; backend?: string; voice_id?: string } | null>(null);
+  const [ttsVoice, setTtsVoice] = useState(() => {
+    try { return localStorage.getItem('openjarvis-tts-voice') || ''; } catch { return ''; }
+  });
+  const [browserVoices, setBrowserVoices] = useState<SpeechSynthesisVoice[]>([]);
+  const [browserVoice, setBrowserVoice] = useState(() => {
+    try { return localStorage.getItem('openjarvis-browser-voice') || ''; } catch { return ''; }
+  });
+  const [ttsPitch, setTtsPitch] = useState(() => {
+    try {
+      const value = Number(localStorage.getItem('openjarvis-tts-pitch') || '0.85');
+      return Number.isFinite(value) && value >= 0 && value <= 2 ? value : 0.85;
+    } catch { return 0.85; }
+  });
+  const [ttsVolume, setTtsVolume] = useState(() => {
+    try {
+      const value = Number(localStorage.getItem('openjarvis-tts-volume') || '1');
+      return Number.isFinite(value) && value >= 0 && value <= 1 ? value : 1;
+    } catch { return 1; }
+  });
+  const [ttsSpeed, setTtsSpeed] = useState(() => {
+    try {
+      const value = Number(localStorage.getItem('openjarvis-tts-speed') || '1');
+      return Number.isFinite(value) && value >= 0.5 && value <= 2 ? value : 1;
+    } catch { return 1; }
+  });
   const [saved, setSaved] = useState(false);
+
+  const androidApp = isAndroidNative();
+  const [androidApiKeyDraft, setAndroidApiKeyDraft] = useState('');
+  const [androidApiKeySaved, setAndroidApiKeySaved] = useState(false);
+  const [androidApiKeyError, setAndroidApiKeyError] = useState('');
+  const [androidVoices, setAndroidVoices] = useState<AndroidVoice[]>([]);
+  const [androidVoiceError, setAndroidVoiceError] = useState('');
+  const [wakeWordEnabled, setWakeWordEnabled] = useState(false);
+  const [wakeWordError, setWakeWordError] = useState('');
+  const [ttsLanguage, setTtsLanguage] = useState(() => {
+    try { return localStorage.getItem('openjarvis-tts-language') || 'en-GB'; } catch { return 'en-GB'; }
+  });
+
+
+  useEffect(() => {
+    if (!androidApp) return;
+    JarvisNative.getSecureStatus()
+      .then((status) => setAndroidApiKeySaved(!!status.OPENJARVIS_API_KEY))
+      .catch(() => setAndroidApiKeyError('Android secure storage is unavailable.'));
+    JarvisNative.getSpeechVoices()
+      .then(({ voices }) => {
+        setAndroidVoices(voices);
+        setAndroidVoiceError(voices.length ? '' : 'No offline Android voices are installed. Add a voice in Android Text-to-speech settings.');
+      })
+      .catch((error) => setAndroidVoiceError(error instanceof Error ? error.message : 'Android speech engine unavailable.'));
+    JarvisNative.isWakeWordEnabled()
+      .then(({ enabled }) => setWakeWordEnabled(enabled))
+      .catch(() => setWakeWordEnabled(false));
+  }, [androidApp]);
+
+  const saveAndroidApiKey = useCallback(async () => {
+    setAndroidApiKeyError('');
+    try {
+      await saveAndroidBackendApiKey(androidApiKeyDraft);
+      setAndroidApiKeyDraft('');
+      setAndroidApiKeySaved(!!androidApiKeyDraft.trim());
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (error) {
+      if (androidApp) {
+        JarvisNative.getSecureStatus().then((status) => setAndroidApiKeySaved(!!status.OPENJARVIS_API_KEY)).catch(() => {});
+      }
+      setAndroidApiKeyError(error instanceof Error ? error.message : 'Could not save API key.');
+    }
+  }, [androidApiKeyDraft, androidApp]);
+
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.speechSynthesis) return;
+    const speech = window.speechSynthesis;
+    const refresh = () => setBrowserVoices(speech.getVoices());
+    refresh();
+    speech.addEventListener?.('voiceschanged', refresh);
+    return () => speech.removeEventListener?.('voiceschanged', refresh);
+  }, []);
 
   const [autoUpdateEnabled, setAutoUpdateEnabled] = useState(() => !isAutoUpdateDisabled());
   const [updateCheckState, setUpdateCheckState] = useState<'idle' | 'checking' | 'available' | 'latest'>('idle');
@@ -319,6 +518,7 @@ export function SettingsPage() {
   }, []);
 
   const [memoryStatus, setMemoryStatus] = useState<MemoryStatus>({ kind: 'loading' });
+  const [memoryClearMessage, setMemoryClearMessage] = useState('');
   const memoryRequestId = useRef(0);
   const [memoryEnabled, setMemoryEnabled] = useState(() => {
     try { return localStorage.getItem('openjarvis-memory-enabled') !== 'false'; } catch { return true; }
@@ -382,6 +582,18 @@ export function SettingsPage() {
       }
     }
   }, []);
+
+  const handleClearIndexedMemory = useCallback(async () => {
+    if (!window.confirm('Clear all indexed memory? This cannot be undone.')) return;
+    setMemoryClearMessage('Clearing indexed memory…');
+    try {
+      const removed = await clearIndexedMemory();
+      setMemoryClearMessage(`Cleared ${removed} indexed entr${removed === 1 ? 'y' : 'ies'}.`);
+      await refreshMemoryStatus();
+    } catch (error) {
+      setMemoryClearMessage(error instanceof Error ? error.message : 'Could not clear memory.');
+    }
+  }, [refreshMemoryStatus]);
 
   useEffect(() => {
     void refreshMemoryStatus();
@@ -554,12 +766,12 @@ export function SettingsPage() {
                 </span>
               </div>
             </SettingRow>
-            <SettingRow label="API URL" description="Set if backend runs on a different port or host">
+            <SettingRow label="API URL" description={androidApp ? 'Use the public HTTPS URL of your JARVIS backend.' : 'Set if backend runs on a different port or host'}>
               <input
                 type="text"
                 value={settings.apiUrl}
                 onChange={(e) => { updateSettings({ apiUrl: e.target.value }); showSaved(); }}
-                placeholder="http://localhost:8000"
+                placeholder={androidApp ? 'https://your-jarvis-server.example' : 'http://localhost:8000'}
                 className="text-sm px-3 py-1.5 rounded-lg outline-none w-56"
                 style={{
                   background: 'var(--color-bg-secondary)',
@@ -568,20 +780,32 @@ export function SettingsPage() {
                 }}
               />
             </SettingRow>
-            <SettingRow label="API key" description="Required only if the server was started with an API key">
-              <input
-                type="password"
-                value={settings.apiKey}
-                onChange={(e) => { updateSettings({ apiKey: e.target.value }); showSaved(); }}
-                placeholder="OPENJARVIS_API_KEY"
-                autoComplete="off"
-                className="text-sm px-3 py-1.5 rounded-lg outline-none w-56"
-                style={{
-                  background: 'var(--color-bg-secondary)',
-                  color: 'var(--color-text)',
-                  border: '1px solid var(--color-border)',
-                }}
-              />
+            <SettingRow
+              label="API key"
+              description={androidApp ? 'Stored encrypted with Android Keystore. Sent only to your HTTPS backend.' : 'Required only if the server was started with an API key'}
+            >
+              <div className="flex flex-col items-end gap-1.5">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="password"
+                    value={androidApp ? androidApiKeyDraft : settings.apiKey}
+                    onChange={(e) => androidApp
+                      ? setAndroidApiKeyDraft(e.target.value)
+                      : (updateSettings({ apiKey: e.target.value }), showSaved())}
+                    placeholder={androidApp && androidApiKeySaved ? 'Saved securely' : 'OPENJARVIS_API_KEY'}
+                    autoComplete="off"
+                    className="text-sm px-3 py-1.5 rounded-lg outline-none w-56"
+                    style={{ background: 'var(--color-bg-secondary)', color: 'var(--color-text)', border: '1px solid var(--color-border)' }}
+                  />
+                  {androidApp && (
+                    <button type="button" onClick={() => void saveAndroidApiKey()} className="px-3 py-1.5 rounded-lg text-xs cursor-pointer" style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}>
+                      {androidApiKeyDraft.trim() ? 'Save' : 'Remove'}
+                    </button>
+                  )}
+                </div>
+                {androidApiKeySaved && <span className="text-[10px]" style={{ color: 'var(--color-success)' }}>Credential saved in Android secure storage</span>}
+                {androidApiKeyError && <span className="text-[10px]" style={{ color: 'var(--color-error)' }}>{androidApiKeyError}</span>}
+              </div>
             </SettingRow>
           </Section>
 
@@ -656,6 +880,11 @@ export function SettingsPage() {
             </SettingRow>
           </Section>
 
+          {/* Needle 3 local inference */}
+          <Section title="Needle 3 Local Brain">
+            <NeedleLocalSection />
+          </Section>
+
           {/* API Keys */}
           <Section title="API Keys">
             <SettingRow label="OpenAI" description="GPT-4, GPT-3.5, etc.">
@@ -685,6 +914,7 @@ export function SettingsPage() {
           {/* Memory */}
           <Section title="Memory">
             <MemoryStatusRow status={memoryStatus} onRetry={() => { void refreshMemoryStatus(); }} />
+            <PersonalMemoryManager />
             <SettingRow label="Use memory context" description="Automatically inject relevant memories into conversations">
               <button
                 onClick={() => {
@@ -707,6 +937,20 @@ export function SettingsPage() {
                 />
               </button>
             </SettingRow>
+            <SettingRow label="Delete indexed memory" description="Remove indexed documents and memories; this does not delete chat history">
+              <button
+                onClick={() => void handleClearIndexedMemory()}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer"
+                style={{ color: 'var(--color-error)', border: '1px solid var(--color-error)', background: 'transparent' }}
+              >
+                <Trash2 size={12} /> Clear
+              </button>
+            </SettingRow>
+            {memoryClearMessage && (
+              <p role="status" className="text-xs -mt-2" style={{ color: 'var(--color-text-secondary)' }}>
+                {memoryClearMessage}
+              </p>
+            )}
             <SettingRow label="Memory backend" description="Which retrieval engine to use">
               <select
                 value={memoryBackend}
@@ -806,7 +1050,41 @@ export function SettingsPage() {
           </Section>
 
           {/* Speech */}
-          <Section title="Speech">
+          <Section title={androidApp ? 'Speech & Voice Studio' : 'Speech'}>
+            {androidApp && (
+              <SettingRow
+                label="Always Ready Wake Word"
+                description="Listen for “Hello JARVIS” while the screen is on, even when another app is open. Pauses when the screen turns off. A persistent Android notification is shown while enabled."
+              >
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    aria-label={wakeWordEnabled ? 'Disable wake word' : 'Enable wake word'}
+                    aria-pressed={wakeWordEnabled}
+                    onClick={async () => {
+                      setWakeWordError('');
+                      try {
+                        if (wakeWordEnabled) {
+                          await JarvisNative.disableWakeWord();
+                          setWakeWordEnabled(false);
+                        } else {
+                          await JarvisNative.enableWakeWord();
+                          setWakeWordEnabled(true);
+                        }
+                      } catch (error) {
+                        setWakeWordError(error instanceof Error ? error.message : 'Could not change wake word setting.');
+                      }
+                    }}
+                    className="relative w-11 h-6 rounded-full transition-colors cursor-pointer"
+                    style={{ background: wakeWordEnabled ? 'var(--color-accent)' : 'var(--color-bg-tertiary)' }}
+                  >
+                    <span className="absolute top-0.5 left-0.5 w-5 h-5 rounded-full transition-transform bg-white"
+                      style={{ transform: wakeWordEnabled ? 'translateX(20px)' : 'translateX(0)', boxShadow: '0 1px 3px rgba(0,0,0,0.2)' }} />
+                  </button>
+                </div>
+              </SettingRow>
+            )}
+            {androidApp && wakeWordError && <p role="alert" className="text-xs py-2" style={{ color: 'var(--color-error)' }}>{wakeWordError}</p>}
             <SettingRow label="Speech-to-Text" description="Enable microphone input for voice dictation">
               <button
                 onClick={() => { updateSettings({ speechEnabled: !settings.speechEnabled }); showSaved(); }}
@@ -861,22 +1139,187 @@ export function SettingsPage() {
                 />
               </button>
             </SettingRow>
-            <SettingRow label="Voice" description="Backend and voice used for spoken replies">
-              <div className="flex items-center gap-2">
+            <SettingRow label="Voice" description="Backend voice ID override; leave blank to use its default">
+              <div className="flex flex-col items-end gap-2">
                 <span
+                  className="flex items-center gap-2 text-xs"
+                  style={{ color: 'var(--color-text-secondary)' }}
+                >
+                  <span
                   className="w-2 h-2 rounded-full"
                   style={{
                     background: ttsBackend?.available ? 'var(--color-success)' : 'var(--color-text-tertiary)',
                   }}
-                />
-                <span className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>
+                  />
                   {ttsBackend === null ? 'Checking...'
                     : ttsBackend.available ? `${ttsBackend.backend}${ttsBackend.voice_id ? ` / ${ttsBackend.voice_id}` : ''}`
-                    : 'Not configured'}
+                    : typeof speechSynthesis !== 'undefined' && typeof SpeechSynthesisUtterance !== 'undefined'
+                      ? 'Browser voice available'
+                      : 'Not configured'}
                 </span>
+                <input
+                  aria-label="Text-to-speech voice ID"
+                  value={ttsVoice}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    setTtsVoice(value);
+                    try { localStorage.setItem('openjarvis-tts-voice', value); } catch {}
+                  }}
+                  placeholder={ttsBackend?.voice_id || 'Backend default'}
+                  className="text-sm px-3 py-1.5 rounded-lg outline-none w-56"
+                  style={{ background: 'var(--color-bg-secondary)', color: 'var(--color-text)', border: '1px solid var(--color-border)' }}
+                />
               </div>
             </SettingRow>
-            <SettingRow label="Backend status" description="Requires Whisper, Deepgram, or another speech backend">
+            <SettingRow
+              label={androidApp ? 'Android system voice' : 'Device voice'}
+              description={androidApp ? 'Native Android Text-to-speech voices installed on this phone.' : 'Available voices depend on voices installed on this device'}
+            >
+              <div className="flex items-center gap-2">
+                <select
+                  aria-label={androidApp ? 'Android text-to-speech voice' : 'Device text-to-speech voice'}
+                  value={browserVoice}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    setBrowserVoice(value);
+                    try { localStorage.setItem('openjarvis-browser-voice', value); } catch {}
+                  }}
+                  className="max-w-56 text-xs px-2 py-1.5 rounded-lg"
+                  style={{ background: 'var(--color-bg-secondary)', color: 'var(--color-text)', border: '1px solid var(--color-border)' }}
+                  disabled={androidApp ? androidVoices.length === 0 : browserVoices.length === 0}
+                >
+                  <option value="">System default</option>
+                  {androidApp
+                    ? androidVoices.map((voice) => <option key={voice.name} value={voice.name}>{voice.name} ({voice.language})</option>)
+                    : browserVoices.map((voice) => <option key={voice.voiceURI} value={voice.name}>{voice.name} ({voice.lang})</option>)}
+                </select>
+                <button
+                  type="button"
+                  disabled={androidApp ? androidVoices.length === 0 : browserVoices.length === 0}
+                  onClick={() => {
+                    if (androidApp) {
+                      const voice = androidVoices.find((item) => item.name === browserVoice);
+                      void JarvisNative.speak({
+                        text: 'Hello sir. How can I help you?', language: voice?.language || ttsLanguage,
+                        voiceName: browserVoice || undefined, rate: ttsSpeed, pitch: ttsPitch, volume: ttsVolume,
+                      }).catch((error) => setAndroidVoiceError(error instanceof Error ? error.message : 'Voice preview failed.'));
+                      return;
+                    }
+                    if (!window.speechSynthesis) return;
+                    window.speechSynthesis.cancel();
+                    const sample = new SpeechSynthesisUtterance('Hello sir. How can I help you?');
+                    sample.rate = ttsSpeed;
+                    sample.pitch = ttsPitch;
+                    sample.volume = ttsVolume;
+                    sample.voice = browserVoices.find((voice) => voice.name === browserVoice) ?? null;
+                    window.speechSynthesis.speak(sample);
+                  }}
+                  className="text-xs cursor-pointer disabled:opacity-40"
+                  style={{ color: 'var(--color-accent)' }}
+                >Preview</button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setBrowserVoice('');
+                    setTtsVoice('');
+                    setTtsPitch(0.85);
+                    setTtsSpeed(1);
+                    setTtsVolume(1);
+                    setTtsLanguage('en-GB');
+                    try {
+                      localStorage.removeItem('openjarvis-browser-voice');
+                      localStorage.removeItem('openjarvis-tts-voice');
+                      localStorage.setItem('openjarvis-tts-pitch', '0.85');
+                      localStorage.setItem('openjarvis-tts-speed', '1');
+                      localStorage.setItem('openjarvis-tts-volume', '1');
+                      localStorage.setItem('openjarvis-tts-language', 'en-GB');
+                    } catch {}
+                  }}
+                  className="text-xs cursor-pointer"
+                  style={{ color: 'var(--color-text-secondary)' }}
+                >Restore default</button>
+              </div>
+            </SettingRow>
+            {androidApp && androidVoiceError && <p className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>{androidVoiceError}</p>}
+            <SettingRow label="Voice language" description="Choose a language when the installed engine provides it">
+              <select
+                aria-label="Voice language"
+                value={ttsLanguage}
+                onChange={(event) => {
+                  setTtsLanguage(event.target.value);
+                  try { localStorage.setItem('openjarvis-tts-language', event.target.value); } catch {}
+                }}
+                className="text-xs px-2 py-1.5 rounded-lg"
+                style={{ background: 'var(--color-bg-secondary)', color: 'var(--color-text)', border: '1px solid var(--color-border)' }}
+              >
+                <option value="en-GB">British English</option>
+                <option value="en-US">American English</option>
+                <option value="en-IN">Indian English</option>
+              </select>
+            </SettingRow>
+            <SettingRow label={androidApp ? 'Native voice pitch' : 'Browser voice pitch'} description={`${ttsPitch.toFixed(2)} · lower values sound deeper`}>
+              <input
+                aria-label="Voice pitch"
+                type="range" min={androidApp ? '0.5' : '0'} max="2" step="0.05" value={ttsPitch}
+                onChange={(event) => {
+                  const value = Number(event.target.value);
+                  setTtsPitch(value);
+                  try { localStorage.setItem('openjarvis-tts-pitch', String(value)); } catch {}
+                }}
+                className="w-40 accent-cyan-400"
+              />
+            </SettingRow>
+            <SettingRow label="Speaking speed" description={`${ttsSpeed.toFixed(1)}×`}>
+              <input
+                aria-label="Speaking speed"
+                type="range"
+                min="0.5"
+                max="2"
+                step="0.1"
+                value={ttsSpeed}
+                onChange={(event) => {
+                  const value = Number(event.target.value);
+                  setTtsSpeed(value);
+                  try { localStorage.setItem('openjarvis-tts-speed', String(value)); } catch {}
+                }}
+                className="w-40 accent-cyan-400"
+              />
+            </SettingRow>
+            <SettingRow label="Voice volume" description={`${Math.round(ttsVolume * 100)}%`}>
+              <input
+                aria-label="Voice volume" type="range" min="0" max="1" step="0.05" value={ttsVolume}
+                onChange={(event) => {
+                  const value = Number(event.target.value);
+                  setTtsVolume(value);
+                  try { localStorage.setItem('openjarvis-tts-volume', String(value)); } catch {}
+                }}
+                className="w-40 accent-cyan-400"
+              />
+            </SettingRow>
+            <SettingRow label="Recognition language" description="Used by browser speech recognition; automatic uses this device's language">
+              <select
+                aria-label="Speech recognition language"
+                value={speechLanguage}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  setSpeechLanguage(value);
+                  try { localStorage.setItem('openjarvis-speech-language', value); } catch {}
+                }}
+                className="text-xs px-2 py-1.5 rounded-lg"
+                style={{ background: 'var(--color-bg-secondary)', color: 'var(--color-text)', border: '1px solid var(--color-border)' }}
+              >
+                <option value="">Automatic</option>
+                <option value="en-GB">English (United Kingdom)</option>
+                <option value="en-US">English (United States)</option>
+                <option value="en-IN">English (India)</option>
+                <option value="fr-FR">Français</option>
+                <option value="de-DE">Deutsch</option>
+                <option value="es-ES">Español</option>
+                <option value="hi-IN">हिन्दी</option>
+                <option value="ja-JP">日本語</option>
+              </select>
+            </SettingRow>
+            <SettingRow label="Server transcription" description="Fallback when browser speech recognition is unavailable">
               <div className="flex items-center gap-2">
                 <span
                   className="w-2 h-2 rounded-full"
@@ -895,7 +1338,7 @@ export function SettingsPage() {
             </SettingRow>
             {!speechBackendAvailable && speechBackendAvailable !== null && (
               <div className="text-xs mt-2 px-1" style={{ color: 'var(--color-text-tertiary)' }}>
-                Set up a speech backend to use voice input.
+                Browser recognition is used when available. Set up a server speech backend for the fallback.
                 See the <a href="https://open-jarvis.github.io/OpenJarvis/user-guide/tools/" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--color-accent)' }}>documentation</a> for details.
               </div>
             )}

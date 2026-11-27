@@ -270,6 +270,8 @@ def create_app(
             "http://127.0.0.1:5173",
             "http://localhost:5174",
             "http://127.0.0.1:5174",
+            # Capacitor Android serves bundled app assets from this secure WebView origin.
+            "https://localhost",
             # Tauri 2 production webview origins:
             #   macOS / Linux / iOS  -> tauri://localhost
             #   Windows / Android    -> http://tauri.localhost (default),
@@ -292,6 +294,26 @@ def create_app(
     )
     app.state.channel_bridge = channel_bridge
     app.state.config = config
+    # Chat transcripts share the established agent-manager SQLite database;
+    # the store creates only additive chat_* tables and never resets it.
+    app.state.conversation_store = None
+    try:
+        from openjarvis.core.paths import get_config_dir
+        from openjarvis.server.conversations import ConversationStore
+
+        chat_db = getattr(getattr(config, "agent_manager", None), "db_path", "") or str(get_config_dir() / "agents.db")
+        app.state.conversation_store = ConversationStore(chat_db)
+    except Exception:
+        logger.exception("Conversation persistence initialization failed")
+    app.state.fact_store = None
+    try:
+        from openjarvis.core.paths import get_config_dir
+        from openjarvis.server.personal_memory import PersonalMemoryStore
+
+        chat_db = getattr(getattr(config, "agent_manager", None), "db_path", "") or str(get_config_dir() / "agents.db")
+        app.state.fact_store = PersonalMemoryStore(chat_db)
+    except Exception:
+        logger.exception("Explicit memory store initialization failed")
     app.state._memory_backend_lock = threading.Lock()
     app.state.memory_backend = memory_backend
     app.state._owns_memory_backend = bool(own_memory_backend)
@@ -320,6 +342,12 @@ def create_app(
 
     @app.on_event("shutdown")
     async def _shutdown_managed_runtime() -> None:
+        conversation_store = getattr(app.state, "conversation_store", None)
+        if conversation_store is not None:
+            conversation_store.close()
+        fact_store = getattr(app.state, "fact_store", None)
+        if fact_store is not None:
+            fact_store.close()
         # Quiesce every producer before touching the shared MCP pool. Route
         # workers are registered under this lock, so none can slip in after
         # the snapshot. The scheduler has a two-phase stop because closing an

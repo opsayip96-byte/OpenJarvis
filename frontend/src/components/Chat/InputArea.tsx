@@ -8,6 +8,7 @@ import { listConnectors, getSyncStatus } from '../../lib/connectors-api';
 import { serializeToolCallArguments } from '../../lib/tool-call';
 import { NeedleNative } from '../../lib/needle-native';
 import { isAndroidNative, JarvisNative, JarvisCoreNative, JARVIS_CORE_MODEL_ID } from '../../lib/android-native';
+import { buildLocalMemoryPrompt, rememberLocalFact, forgetLocalFact } from '../../lib/local-memory';
 import {
   engineFromCompletionChunk,
   resolveChatEngine,
@@ -358,6 +359,10 @@ export function InputArea() {
       ? [input.trim(), recognizedText.trim()].filter(Boolean).join(' ')
       : input.trim();
     const content = textContent || (filesToSend.length ? 'Please analyze the attached media.' : '');
+    const rememberMatch = content.match(/^(?:please\\s+)?remember(?:\\s+that)?\\s+(.+)$/i);
+    const forgetMatch = content.match(/^(?:please\\s+)?forget(?:\\s+that)?\\s+(.+)$/i);
+    const memoryAction = rememberMatch ? { type: 'remember' as const, text: rememberMatch[1].trim() }
+      : forgetMatch ? { type: 'forget' as const, text: forgetMatch[1].trim() } : null;
     if ((!content && filesToSend.length === 0) || streamState.isStreaming) return;
     if (!selectedModel) {
       toast.error('Pick a model first (⌘K)');
@@ -482,7 +487,18 @@ export function InputArea() {
       // On Android, Needle is the first-stage router even when a separate
       // chat model is selected. The selected model is only called after
       // Needle has inspected the request and returned no local action.
-      if (!isNeedleLocal && isAndroidNative()) {
+      if (memoryAction) {
+        if (memoryAction.type === 'remember') {
+          rememberLocalFact(memoryAction.text);
+          accumulatedContent = "Certainly, Sir. I've saved that in JARVIS's private memory on this device.";
+        } else {
+          const remaining = forgetLocalFact(memoryAction.text);
+          accumulatedContent = remaining.length === getLocalMemories().length
+            ? "I couldn't find a saved memory matching that description."
+            : "I've removed the matching fact from JARVIS's local memory.";
+        }
+        setStreamState({ content: accumulatedContent, phase: 'Local memory updated.' });
+      } else if (!isNeedleLocal && isAndroidNative()) {
         const needleStatus = await NeedleNative.getStatus();
         if (needleStatus.nativeAvailable && needleStatus.modelDownloaded) {
           setStreamState({ phase: 'Needle 3 analysing locally...' });
@@ -558,8 +574,11 @@ export function InputArea() {
           throw new Error('Deep Research uses the configured research backend. Turn it off to chat privately with local JARVIS Core.');
         }
         setStreamState({ phase: 'JARVIS Core thinking locally...' });
+        const localMessages = [...apiMessages];
+        const savedMemory = buildLocalMemoryPrompt();
+        if (savedMemory) localMessages.unshift({ role: 'system', content: savedMemory });
         const result = await JarvisCoreNative.complete({
-          messages: JSON.stringify(apiMessages),
+          messages: JSON.stringify(localMessages),
           maxTokens: Math.max(64, Math.min(maxTokens, 1024)),
           temperature,
         });

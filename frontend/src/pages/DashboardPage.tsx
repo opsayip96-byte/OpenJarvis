@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAppStore } from '../lib/store';
-import { isAndroidNative, JarvisNative, JarvisCoreNative, JARVIS_CORE_MODEL_ID, type JarvisCoreStatus } from '../lib/android-native';
+import { isAndroidNative, JarvisNative, JarvisCoreNative, JARVIS_CORE_MODEL_ID, JARVIS_CORE_MODEL_SLUG, JARVIS_VISION_MODEL_ID, JARVIS_VISION_MODEL_SLUG, type JarvisCoreStatus } from '../lib/android-native';
 
 export function DashboardPage() {
   const navigate = useNavigate();
@@ -18,6 +18,10 @@ export function DashboardPage() {
   const [coreBusy, setCoreBusy] = useState(false);
   const [coreProgress, setCoreProgress] = useState(0);
   const [coreStage, setCoreStage] = useState('');
+  const [visionStatus, setVisionStatus] = useState<JarvisCoreStatus | null>(null);
+  const [visionBusy, setVisionBusy] = useState(false);
+  const [visionProgress, setVisionProgress] = useState(0);
+  const [visionStage, setVisionStage] = useState('');
   const [overlayAllowed, setOverlayAllowed] = useState(false);
   const [floatingActive, setFloatingActive] = useState(false);
   const [checkingOverlay, setCheckingOverlay] = useState(true);
@@ -51,10 +55,17 @@ export function DashboardPage() {
     let progressListener: { remove: () => Promise<void> } | null = null;
     void refreshFloatingStatus();
     void refreshCoreStatus();
+    void refreshVisionStatus();
     JarvisCoreNative.addListener('coreDownloadProgress', (event) => {
       if (!active) return;
-      setCoreProgress(Math.max(0, Math.min(1, event.progress || 0)));
-      setCoreStage(event.stage || 'Downloading JARVIS Core...');
+      const progress = Math.max(0, Math.min(1, event.progress || 0));
+      if (event.modelSlug === JARVIS_VISION_MODEL_SLUG) {
+        setVisionProgress(progress);
+        setVisionStage(event.stage || 'Downloading JARVIS Vision...');
+      } else {
+        setCoreProgress(progress);
+        setCoreStage(event.stage || 'Downloading JARVIS Core...');
+      }
     }).then((listener) => {
       if (active) progressListener = listener;
       else void listener.remove();
@@ -62,6 +73,7 @@ export function DashboardPage() {
     const onFocus = () => {
       void refreshFloatingStatus();
       void refreshCoreStatus();
+      void refreshVisionStatus();
     };
     window.addEventListener('focus', onFocus);
     return () => {
@@ -74,9 +86,48 @@ export function DashboardPage() {
   const refreshCoreStatus = async () => {
     if (!isAndroidNative()) return;
     try {
-      setCoreStatus(await JarvisCoreNative.getStatus());
+      setCoreStatus(await JarvisCoreNative.getStatus({ modelSlug: JARVIS_CORE_MODEL_SLUG }));
     } catch {
       setCoreStatus(null);
+    }
+  };
+
+  const refreshVisionStatus = async () => {
+    if (!isAndroidNative()) return;
+    try {
+      setVisionStatus(await JarvisCoreNative.getStatus({ modelSlug: JARVIS_VISION_MODEL_SLUG }));
+    } catch {
+      setVisionStatus(null);
+    }
+  };
+
+  const installOrLoadVision = async () => {
+    if (!isAndroidNative()) {
+      toast.info('JARVIS Vision runs in the native Android app.');
+      return;
+    }
+    setVisionBusy(true);
+    setVisionStage('Checking local vision runtime...');
+    try {
+      let status = await JarvisCoreNative.getStatus({ modelSlug: JARVIS_VISION_MODEL_SLUG });
+      if (!status.nativeAvailable) throw new Error('The Cactus local inference runtime is missing from this APK.');
+      if (!status.modelDownloaded) {
+        setVisionStage('Downloading LFM2.5 Vision model...');
+        setVisionProgress(0);
+        await JarvisCoreNative.downloadModel({ modelSlug: JARVIS_VISION_MODEL_SLUG });
+        status = await JarvisCoreNative.getStatus({ modelSlug: JARVIS_VISION_MODEL_SLUG });
+      }
+      setVisionStage('Loading JARVIS Vision into memory...');
+      await JarvisCoreNative.initializeModel({ modelSlug: JARVIS_VISION_MODEL_SLUG, contextSize: 2048 });
+      setVisionStatus(await JarvisCoreNative.getStatus({ modelSlug: JARVIS_VISION_MODEL_SLUG }));
+      setSelectedModel(JARVIS_VISION_MODEL_ID);
+      toast.success('JARVIS Vision is loaded. Select photos or videos in chat to analyze them locally.');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not install or load JARVIS Vision.');
+      await refreshVisionStatus();
+    } finally {
+      setVisionBusy(false);
+      setVisionStage('');
     }
   };
 
@@ -88,19 +139,19 @@ export function DashboardPage() {
     setCoreBusy(true);
     setCoreStage('Checking local runtime...');
     try {
-      let status = await JarvisCoreNative.getStatus();
+      let status = await JarvisCoreNative.getStatus({ modelSlug: JARVIS_CORE_MODEL_SLUG });
       if (!status.nativeAvailable) {
         throw new Error('The Cactus local inference runtime is not included in this build.');
       }
       if (!status.modelDownloaded) {
         setCoreStage('Downloading Qwen3 1.7B model...');
         setCoreProgress(0);
-        await JarvisCoreNative.downloadModel();
-        status = await JarvisCoreNative.getStatus();
+        await JarvisCoreNative.downloadModel({ modelSlug: JARVIS_CORE_MODEL_SLUG });
+        status = await JarvisCoreNative.getStatus({ modelSlug: JARVIS_CORE_MODEL_SLUG });
       }
       setCoreStage('Loading JARVIS Core into memory...');
-      await JarvisCoreNative.initializeModel({ contextSize: 4096 });
-      setCoreStatus(await JarvisCoreNative.getStatus());
+      await JarvisCoreNative.initializeModel({ modelSlug: JARVIS_CORE_MODEL_SLUG, contextSize: 4096 });
+      setCoreStatus(await JarvisCoreNative.getStatus({ modelSlug: JARVIS_CORE_MODEL_SLUG }));
       setSelectedModel(JARVIS_CORE_MODEL_ID);
       toast.success('JARVIS Core is loaded. New conversations will run locally on this phone.');
     } catch (error) {
@@ -229,6 +280,38 @@ export function DashboardPage() {
               className="inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition-opacity disabled:opacity-50"
               style={{ background: coreReady ? 'var(--color-bg-tertiary)' : '#0e7490', color: coreReady ? 'var(--color-text)' : '#fff' }}>
               <Brain size={16} /> {coreBusy ? 'Working...' : coreStatus?.modelLoaded && coreReady ? 'JARVIS Core active' : coreStatus?.modelDownloaded ? 'Load & use JARVIS Core' : 'Install JARVIS Core'}
+            </button>
+          </div>
+        </section>
+
+        <section className="rounded-2xl border p-4 sm:p-5" style={{ background: 'var(--color-surface)', borderColor: 'var(--color-border)' }}>
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <div className="mb-1 flex items-center gap-2">
+                <Sparkles size={17} style={{ color: 'var(--color-accent)' }} />
+                <h2 className="text-base font-semibold" style={{ color: 'var(--color-text)' }}>JARVIS Vision, local image AI</h2>
+              </div>
+              <p className="text-xs leading-5" style={{ color: 'var(--color-text-secondary)' }}>
+                LFM2.5-VL 1.6B analyzes photos and extracted video frames on-device. First installation is about 1.1 GB. It is loaded instead of the chat model to stay within phone memory.
+              </p>
+              <p className="mt-2 text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
+                {!isAndroidNative() ? 'Available in the Android APK.' : visionStatus?.modelLoaded ? 'Vision model loaded and ready.' : visionStatus?.modelDownloaded ? 'Vision model downloaded, ready to load.' : visionStatus?.nativeAvailable ? 'Vision model not installed yet.' : 'Checking vision runtime...'}
+              </p>
+              {visionBusy && (
+                <div className="mt-3 max-w-md">
+                  <div className="mb-1 flex justify-between text-[11px]" style={{ color: 'var(--color-text-secondary)' }}>
+                    <span>{visionStage || 'Working...'}</span><span>{Math.round(visionProgress * 100)}%</span>
+                  </div>
+                  <div className="h-1.5 overflow-hidden rounded-full" style={{ background: 'var(--color-bg-tertiary)' }}>
+                    <div className="h-full rounded-full transition-all" style={{ width: `${Math.round(visionProgress * 100)}%`, background: 'var(--color-accent)' }} />
+                  </div>
+                </div>
+              )}
+            </div>
+            <button onClick={() => void installOrLoadVision()} disabled={visionBusy || !isAndroidNative()}
+              className="inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition-opacity disabled:opacity-50"
+              style={{ background: selectedModel === JARVIS_VISION_MODEL_ID ? 'var(--color-bg-tertiary)' : '#0e7490', color: selectedModel === JARVIS_VISION_MODEL_ID ? 'var(--color-text)' : '#fff' }}>
+              <Sparkles size={16} /> {visionBusy ? 'Working...' : visionStatus?.modelDownloaded ? 'Load & use JARVIS Vision' : 'Install JARVIS Vision'}
             </button>
           </div>
         </section>

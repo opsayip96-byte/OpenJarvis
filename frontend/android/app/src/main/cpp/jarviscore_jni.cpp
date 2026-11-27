@@ -1,5 +1,5 @@
 #include <jni.h>
-#include "cactus.h"
+#include "cactus_ffi.h"
 #include <cstddef>
 #include <cstdint>
 #include <mutex>
@@ -41,7 +41,7 @@ Java_com_openjarvis_jarvis_JarvisCoreNativePlugin_nativeInitialize(
     const size_t safe_context = static_cast<size_t>(
         contextSize < 1024 ? 1024 : (contextSize > 8192 ? 8192 : contextSize)
     );
-    model_handle = cactus_init(path.c_str(), nullptr, false);
+    model_handle = cactus_init(path.c_str(), safe_context, nullptr);
     if (!model_handle) {
         throwJava(env, "Cactus could not initialize JARVIS Core. Check that the model download is complete and compatible.");
         return JNI_FALSE;
@@ -67,7 +67,7 @@ Java_com_openjarvis_jarvis_JarvisCoreNativePlugin_nativeComplete(
         (maxTokens < 64 ? 64 : (maxTokens > 2048 ? 2048 : maxTokens)) * 64 + 65536
     );
     std::vector<char> output(capacity, '\0');
-    const int32_t result = cactus_complete(
+    const int result = cactus_complete(
         model_handle,
         messages.c_str(),
         output.data(),

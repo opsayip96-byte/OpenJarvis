@@ -301,11 +301,11 @@ public class JarvisCoreNativePlugin extends Plugin {
                 throw new IllegalStateException("Image attachments require the separate JARVIS Vision model.");
             }
             if ("system".equals(role)) {
-                prompt.append("Context: ").append(content).append("\\n");
+                prompt.append("Context: ").append(content).append("\n");
             } else if ("assistant".equals(role)) {
-                prompt.append("JARVIS: ").append(content).append("\\n");
+                prompt.append("JARVIS: ").append(content).append("\n");
             } else if ("user".equals(role)) {
-                prompt.append("User: ").append(content).append("\\n");
+                prompt.append("User: ").append(content).append("\n");
             }
         }
         prompt.append("JARVIS:");

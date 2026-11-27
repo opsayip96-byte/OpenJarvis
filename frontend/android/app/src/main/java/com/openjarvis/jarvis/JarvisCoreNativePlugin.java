@@ -1,12 +1,14 @@
 package com.openjarvis.jarvis;
 
 import android.os.StatFs;
+import android.util.Base64;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.BufferedInputStream;
@@ -17,6 +19,8 @@ import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.zip.ZipEntry;
@@ -24,14 +28,15 @@ import java.util.zip.ZipInputStream;
 
 @CapacitorPlugin(name = "JarvisCoreNative")
 public class JarvisCoreNativePlugin extends Plugin {
-    private static final String MODEL_SLUG = "qwen3-1.7b";
-    private static final String MODEL_API =
-        "https://vlqqczxwyaodtcdmdmlw.supabase.co/functions/v1/get-models?slug=qwen3-1.7b&sdk_name=flutter&sdk_version=1.3.0";
+    private static final String DEFAULT_MODEL_SLUG = "qwen3-1.7b";
+    private static final String VISION_MODEL_SLUG = "lfm2.5-vl-1.6b";
+    private static final String MODEL_API_BASE = "https://vlqqczxwyaodtcdmdmlw.supabase.co/functions/v1/get-models";
     private static final String SUPABASE_ANON_KEY =
         "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZscXFjenh3eWFvZHRjZG1kbWx3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTE1MTg2MzIsImV4cCI6MjA2NzA5NDYzMn0.nBzqGuK9j6RZ6mOPWU2boAC_5H9XDs-fPpo5P3WZYbI";
     private static final ExecutorService WORKER = Executors.newSingleThreadExecutor();
     private static volatile boolean nativeAvailable = false;
     private static volatile boolean modelLoaded = false;
+    private static volatile String modelLoadedSlug = null;
 
     private static native boolean nativeInitialize(String modelPath, int contextSize);
     private static native String nativeComplete(String messagesJson, String optionsJson, int maxTokens);
@@ -50,12 +55,24 @@ public class JarvisCoreNativePlugin extends Plugin {
         }
     }
 
+    private String checkedModelSlug(String requested) {
+        String slug = requested == null || requested.trim().isEmpty() ? DEFAULT_MODEL_SLUG : requested.trim();
+        if (!DEFAULT_MODEL_SLUG.equals(slug) && !VISION_MODEL_SLUG.equals(slug)) {
+            throw new IllegalArgumentException("Unsupported local model: " + slug);
+        }
+        return slug;
+    }
+
     private File modelsDirectory() {
         return new File(getContext().getFilesDir(), "models");
     }
 
-    private File modelDirectory() {
-        return new File(modelsDirectory(), MODEL_SLUG);
+    private File modelDirectory(String slug) {
+        return new File(modelsDirectory(), slug);
+    }
+
+    private String modelApi(String slug) {
+        return MODEL_API_BASE + "?slug=" + slug + "&sdk_name=flutter&sdk_version=1.3.0";
     }
 
     private long directoryBytes(File directory) {
@@ -70,35 +87,42 @@ public class JarvisCoreNativePlugin extends Plugin {
 
     @PluginMethod
     public void getStatus(PluginCall call) {
-        File model = modelDirectory();
+        final String slug;
+        try { slug = checkedModelSlug(call.getString("modelSlug")); }
+        catch (Exception error) { call.reject(error.getMessage()); return; }
+        File model = modelDirectory(slug);
         long bytes = directoryBytes(model);
         JSObject result = new JSObject();
         result.put("nativeAvailable", nativeAvailable);
         result.put("modelDownloaded", model.isDirectory() && bytes > 50L * 1024L * 1024L);
         result.put("modelBytes", bytes);
-        result.put("modelLoaded", modelLoaded);
-        result.put("modelSlug", MODEL_SLUG);
+        result.put("modelLoaded", modelLoaded && slug.equals(modelLoadedSlug));
+        result.put("modelSlug", slug);
         call.resolve(result);
     }
 
     @PluginMethod
     public void downloadModel(PluginCall call) {
+        final String slug;
+        try { slug = checkedModelSlug(call.getString("modelSlug")); }
+        catch (Exception error) { call.reject(error.getMessage()); return; }
+
         WORKER.execute(() -> {
             File models = modelsDirectory();
-            File target = modelDirectory();
-            File zip = new File(models, MODEL_SLUG + ".zip.part");
-            File staging = new File(models, MODEL_SLUG + ".installing");
+            File target = modelDirectory(slug);
+            File zip = new File(models, slug + ".zip.part");
+            File staging = new File(models, slug + ".installing");
             HttpURLConnection metadataConnection = null;
             HttpURLConnection downloadConnection = null;
             try {
                 if (!nativeAvailable) throw new IllegalStateException("The on-device Cactus runtime is missing from this APK.");
                 if (target.isDirectory() && directoryBytes(target) > 50L * 1024L * 1024L) {
-                    call.resolve(new JSObject().put("downloaded", true).put("bytes", directoryBytes(target)));
+                    call.resolve(new JSObject().put("downloaded", true).put("bytes", directoryBytes(target)).put("modelSlug", slug));
                     return;
                 }
                 if (!models.exists() && !models.mkdirs()) throw new IllegalStateException("Cannot create the model storage directory.");
 
-                metadataConnection = (HttpURLConnection) new URL(MODEL_API).openConnection();
+                metadataConnection = (HttpURLConnection) new URL(modelApi(slug)).openConnection();
                 metadataConnection.setConnectTimeout(20000);
                 metadataConnection.setReadTimeout(30000);
                 metadataConnection.setRequestProperty("apikey", SUPABASE_ANON_KEY);
@@ -114,7 +138,7 @@ public class JarvisCoreNativePlugin extends Plugin {
                 long requiredBytes = Math.max(900L * 1024L * 1024L, expectedModelMb * 1024L * 1024L);
                 StatFs stat = new StatFs(models.getAbsolutePath());
                 if (stat.getAvailableBytes() < requiredBytes + 300L * 1024L * 1024L) {
-                    throw new IllegalStateException("Not enough free storage. JARVIS Core needs about " + expectedModelMb + " MB plus temporary extraction space.");
+                    throw new IllegalStateException("Not enough free storage. " + slug + " needs about " + expectedModelMb + " MB plus temporary extraction space.");
                 }
 
                 downloadConnection = (HttpURLConnection) new URL(downloadUrl).openConnection();
@@ -141,12 +165,18 @@ public class JarvisCoreNativePlugin extends Plugin {
                                 .put("progress", Math.min(1.0, (double) received / total))
                                 .put("receivedBytes", received)
                                 .put("totalBytes", total)
-                                .put("stage", "Downloading JARVIS Core"), true);
+                                .put("stage", "Downloading " + slug)
+                                .put("modelSlug", slug), true);
                         }
                     }
                     output.flush();
                     fileOutput.getFD().sync();
                 }
+
+                notifyListeners("coreDownloadProgress", new JSObject()
+                    .put("progress", 1.0).put("receivedBytes", zip.length())
+                    .put("totalBytes", zip.length()).put("stage", "Extracting " + slug)
+                    .put("modelSlug", slug), true);
 
                 if (staging.exists()) deleteRecursively(staging);
                 if (!staging.mkdirs()) throw new IllegalStateException("Could not prepare the model extraction directory.");
@@ -160,12 +190,13 @@ public class JarvisCoreNativePlugin extends Plugin {
                 zip.delete();
                 notifyListeners("coreDownloadProgress", new JSObject()
                     .put("progress", 1.0).put("receivedBytes", extractedBytes)
-                    .put("totalBytes", extractedBytes).put("stage", "Model ready"), true);
-                call.resolve(new JSObject().put("downloaded", true).put("bytes", extractedBytes));
+                    .put("totalBytes", extractedBytes).put("stage", "Model ready")
+                    .put("modelSlug", slug), true);
+                call.resolve(new JSObject().put("downloaded", true).put("bytes", extractedBytes).put("modelSlug", slug));
             } catch (Exception error) {
                 zip.delete();
                 if (staging.exists()) deleteRecursively(staging);
-                call.reject("JARVIS Core download failed: " + error.getMessage(), "JARVIS_CORE_DOWNLOAD_FAILED", error);
+                call.reject("JARVIS model download failed: " + error.getMessage(), "JARVIS_CORE_DOWNLOAD_FAILED", error);
             } finally {
                 if (metadataConnection != null) metadataConnection.disconnect();
                 if (downloadConnection != null) downloadConnection.disconnect();
@@ -216,6 +247,40 @@ public class JarvisCoreNativePlugin extends Plugin {
         }
     }
 
+    private String materializeImageInputs(String messagesJson, List<File> temporaryImages) throws Exception {
+        JSONArray messages = new JSONArray(messagesJson);
+        for (int i = 0; i < messages.length(); i++) {
+            JSONObject message = messages.optJSONObject(i);
+            if (message == null) continue;
+            JSONArray images = message.optJSONArray("images");
+            if (images == null) continue;
+            JSONArray paths = new JSONArray();
+            for (int j = 0; j < images.length(); j++) {
+                String encoded = images.optString(j, "");
+                if (encoded.isEmpty()) continue;
+                File existing = new File(encoded);
+                if (existing.isFile()) {
+                    paths.put(existing.getAbsolutePath());
+                    continue;
+                }
+                int comma = encoded.indexOf(',');
+                if (encoded.startsWith("data:") && comma >= 0) encoded = encoded.substring(comma + 1);
+                byte[] bytes = Base64.decode(encoded, Base64.DEFAULT);
+                File imageDir = new File(getContext().getCacheDir(), "jarvis_vision_inputs");
+                if (!imageDir.exists() && !imageDir.mkdirs()) throw new IllegalStateException("Could not prepare local vision image storage.");
+                File image = new File(imageDir, "vision_" + System.nanoTime() + "_" + j + ".jpg");
+                try (FileOutputStream output = new FileOutputStream(image)) {
+                    output.write(bytes);
+                    output.getFD().sync();
+                }
+                temporaryImages.add(image);
+                paths.put(image.getAbsolutePath());
+            }
+            message.put("images", paths);
+        }
+        return messages.toString();
+    }
+
     private String readAll(InputStream input) throws Exception {
         try (InputStream stream = input; java.io.ByteArrayOutputStream output = new java.io.ByteArrayOutputStream()) {
             byte[] buffer = new byte[8192];
@@ -235,31 +300,42 @@ public class JarvisCoreNativePlugin extends Plugin {
 
     @PluginMethod
     public void initializeModel(PluginCall call) {
+        final String slug;
+        try { slug = checkedModelSlug(call.getString("modelSlug")); }
+        catch (Exception error) { call.reject(error.getMessage()); return; }
         WORKER.execute(() -> {
             try {
                 if (!nativeAvailable) throw new IllegalStateException("Cactus native runtime is unavailable.");
-                if (!modelDirectory().isDirectory() || directoryBytes(modelDirectory()) < 50L * 1024L * 1024L) {
-                    throw new IllegalStateException("Download JARVIS Core before loading it.");
+                if (!modelDirectory(slug).isDirectory() || directoryBytes(modelDirectory(slug)) < 50L * 1024L * 1024L) {
+                    throw new IllegalStateException("Download " + slug + " before loading it.");
                 }
-                boolean loaded = nativeInitialize(modelDirectory().getAbsolutePath(), call.getInt("contextSize", 4096));
+                boolean loaded = nativeInitialize(modelDirectory(slug).getAbsolutePath(), call.getInt("contextSize", 4096));
                 modelLoaded = loaded;
-                call.resolve(new JSObject().put("loaded", loaded).put("model", MODEL_SLUG));
+                modelLoadedSlug = loaded ? slug : null;
+                call.resolve(new JSObject().put("loaded", loaded).put("model", slug));
             } catch (Exception error) {
                 modelLoaded = false;
-                call.reject("JARVIS Core initialization failed: " + error.getMessage(), "JARVIS_CORE_INIT_FAILED", error);
+                modelLoadedSlug = null;
+                call.reject("JARVIS model initialization failed: " + error.getMessage(), "JARVIS_CORE_INIT_FAILED", error);
             }
         });
     }
 
     @PluginMethod
     public void complete(PluginCall call) {
+        final String slug;
+        try { slug = checkedModelSlug(call.getString("modelSlug")); }
+        catch (Exception error) { call.reject(error.getMessage()); return; }
         WORKER.execute(() -> {
+            List<File> temporaryImages = new ArrayList<>();
             try {
-                if (!modelLoaded) {
-                    boolean loaded = nativeInitialize(modelDirectory().getAbsolutePath(), 4096);
+                if (!modelLoaded || !slug.equals(modelLoadedSlug)) {
+                    if (!modelDirectory(slug).isDirectory()) throw new IllegalStateException("Download " + slug + " before chatting with it.");
+                    boolean loaded = nativeInitialize(modelDirectory(slug).getAbsolutePath(), 4096);
                     modelLoaded = loaded;
+                    modelLoadedSlug = loaded ? slug : null;
                 }
-                String messages = call.getString("messages", "[]");
+                String messages = materializeImageInputs(call.getString("messages", "[]"), temporaryImages);
                 int maxTokens = Math.max(64, Math.min(1024, call.getInt("maxTokens", 384)));
                 double temperature = Math.max(0.0, Math.min(1.5, call.getDouble("temperature", 0.7)));
                 JSONObject options = new JSONObject();
@@ -277,9 +353,11 @@ public class JarvisCoreNativePlugin extends Plugin {
                     .put("tokensPerSecond", response.optDouble("tokens_per_second", 0))
                     .put("totalTimeMs", response.optDouble("total_time_ms", 0))
                     .put("timeToFirstTokenMs", response.optDouble("time_to_first_token_ms", 0))
-                    .put("model", MODEL_SLUG));
+                    .put("model", slug));
             } catch (Exception error) {
-                call.reject("JARVIS Core inference failed: " + error.getMessage(), "JARVIS_CORE_INFERENCE_FAILED", error);
+                call.reject("JARVIS inference failed: " + error.getMessage(), "JARVIS_CORE_INFERENCE_FAILED", error);
+            } finally {
+                for (File image : temporaryImages) image.delete();
             }
         });
     }
@@ -295,7 +373,7 @@ public class JarvisCoreNativePlugin extends Plugin {
     @PluginMethod
     public void unload(PluginCall call) {
         WORKER.execute(() -> {
-            try { nativeUnload(); modelLoaded = false; call.resolve(); }
+            try { nativeUnload(); modelLoaded = false; modelLoadedSlug = null; call.resolve(); }
             catch (Exception error) { call.reject("Could not unload JARVIS Core.", "JARVIS_CORE_UNLOAD_FAILED", error); }
         });
     }

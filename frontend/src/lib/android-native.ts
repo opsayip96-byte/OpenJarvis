@@ -51,10 +51,10 @@ export interface JarvisCoreStatus {
 }
 
 interface JarvisCoreNativePlugin {
-  getStatus(): Promise<JarvisCoreStatus>;
-  downloadModel(): Promise<{ downloaded: boolean; bytes: number }>;
-  initializeModel(options?: { contextSize?: number }): Promise<{ loaded: boolean; model: string }>;
-  complete(options: { messages: string; maxTokens?: number; temperature?: number }): Promise<{
+  getStatus(options?: { modelSlug?: string }): Promise<JarvisCoreStatus>;
+  downloadModel(options?: { modelSlug?: string }): Promise<{ downloaded: boolean; bytes: number; modelSlug: string }>;
+  initializeModel(options?: { modelSlug?: string; contextSize?: number }): Promise<{ loaded: boolean; model: string }>;
+  complete(options: { modelSlug?: string; messages: string; maxTokens?: number; temperature?: number }): Promise<{
     response: string;
     tokensPerSecond: number;
     totalTimeMs: number;
@@ -73,3 +73,6 @@ interface JarvisCoreNativePlugin {
 
 export const JarvisCoreNative = registerPlugin<JarvisCoreNativePlugin>('JarvisCoreNative');
 export const JARVIS_CORE_MODEL_ID = 'jarvis-core-local';
+export const JARVIS_CORE_MODEL_SLUG = 'qwen3-1.7b';
+export const JARVIS_VISION_MODEL_ID = 'jarvis-vision-local';
+export const JARVIS_VISION_MODEL_SLUG = 'lfm2.5-vl-1.6b';

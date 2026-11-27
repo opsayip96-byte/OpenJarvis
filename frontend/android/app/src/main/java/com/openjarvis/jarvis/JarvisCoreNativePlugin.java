@@ -47,7 +47,6 @@ public class JarvisCoreNativePlugin extends Plugin {
     public void load() {
         super.load();
         try {
-            System.loadLibrary("cactus");
             System.loadLibrary("jarviscore");
             nativeAvailable = true;
         } catch (UnsatisfiedLinkError error) {

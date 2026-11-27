@@ -13,6 +13,12 @@ interface JarvisNativePlugin {
   startFloatingAssistant(): Promise<{ started: boolean }>;
   stopFloatingAssistant(): Promise<void>;
   checkMicrophonePermission(): Promise<{ state: string; available: boolean }>;
+  isWakeWordEnabled(): Promise<{ enabled: boolean }>;
+  enableWakeWord(): Promise<{ enabled: boolean }>;
+  disableWakeWord(): Promise<{ enabled: boolean }>;
+  pauseWakeWord(): Promise<void>;
+  resumeWakeWord(): Promise<void>;
+  addListener(eventName: 'wakeDetected', listener: (event: { detected: boolean }) => void): Promise<{ remove: () => Promise<void> }>;
   addListener(eventName: 'speechResult', listener: (event: { text: string }) => void): Promise<{ remove: () => Promise<void> }>;
   startRecognition(options: { language: string }): Promise<{ started: boolean }>;
   stopRecognition(): Promise<{ text: string }>;
